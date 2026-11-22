@@ -33,7 +33,7 @@ Exit: a baseline report per model and task type, and the threat model signed off
 | 0.1.9 | Verify the two unverified sources and revisit the workflow and rollout diagrams | Audit log: still open; Sources | — | Claude Code Code Mode page and LangChain post opened, their PRD rows kept or removed; both diagrams match the text | — | Not started |
 | 0.1.10 | Re-score the threat table and sign it off | Phase 0 exit; Threat model; Governance: risk register | 0.1.4, 0.1.5 | Each threat row has a likelihood, an impact and a sign-off date | — | Not started |
 | 0.1.12 | Set the numeric limits the tests need: sandbox CPU, memory, wall-clock and call-count limits, quotas and spend caps, and the argument size that counts as unusually large | FR-4; FR-27; FR-29; Flag 16 | 0.1.2 | Each limit is a number in the config or policy schema, with its reason | P0 | Not started |
-| 0.1.13 | Accept or reject each flag fix laid in the PRD as a suggestion | Flags | — | Every suggestion in the PRD is accepted or rejected; each flag row here says which | — | In progress |
+| 0.1.13 | Accept or reject each flag fix laid in the PRD as a suggestion | Flags | — | Every suggestion in the PRD is accepted or rejected; the Flags table records each outcome | — | In progress |
 | 0.1.11 | Sign off the Phase 0 exit | Phase 0 exit | 0.1.10, 0.2.5, 0.3.2, G.1 and every other Phase 0 task | Baseline report exists, threat model is signed off and the go or no-go from 0.2.7 is recorded; no Phase 1 build task starts before this | — | Not started |
 
 ### 0.2 Eval harness, task suite, first golden tasks
@@ -151,7 +151,7 @@ Exit: Gate 1. Security first: every P0 security requirement in place, the advers
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 1.9.1 | Record the host for the in-app adapter: a small test app in this repo (decided 2026-11-22) | FR-9; Assumptions; Flag 9 | — | The PRD's decisions table names the test app | P0 | In progress |
+| 1.9.1 | Record the host for the in-app adapter: a small test app in this repo (decided 2026-11-22) | FR-9; Assumptions; Flag 9 | — | The PRD's decisions table names the test app | P0 | Done |
 | 1.9.2 | Build a minimal agent loop in this repo as the test app, and register the `code` tool in it with a direct-call path for the wrapped tools | FR-9; FR-16 | 1.9.1, 1.2.4 | The tool works with one Claude and one GPT model; with Code Mode off the same tools are called directly | P0 | Not started |
 | 1.9.3 | Export per-run metrics to the monitoring stack | NFR: observability | 1.4.1 | Latency, outcome and security events arrive per run, plus token metrics when metering is on | — | Not started |
 | 1.9.4 | Measure the latency the core adds | NFR: performance | 1.9.2, 0.2.6 | Added latency per run is reported against the budget | — | Not started |
@@ -257,21 +257,21 @@ These run alongside the phases, at the cadence the Governance section sets. G.4 
 
 Places where the PRD contradicts itself or leaves work unplaced. The tasks above already work around each one. The PRD body is unchanged, and every fix here is proposed.
 
-| # | Issue | Proposed fix | Tasks |
-|---|---|---|---|
-| 1 | Build plan 0.2 is done when all three arms have run, but the code tool does not exist in Phase 0, and the Phase 0 row names only two arms | Run two arms in Phase 0 and the code arm before Gate 1 | 0.2.5, 1.9.5 |
-| 2 | FR-23, FR-24 and Build plan 1.1 assume a container or a local process (image digests, "cannot read outside its folder"), but the chosen host is Workers | Restate them in Workers terms: binding allowlist, secret store, pinned compatibility date. The local-listener checks apply only if a local stdio server is added | 1.1.1, 1.1.6 |
-| 3 | FR-1 lists `completed`, `paused` and `error`, but the output contract adds `refused` | Add `refused` to FR-1 | 0.1.4 |
-| 4 | FR-16 makes wrapped tools directly callable when Code Mode is off, but no workstream builds that direct-call path | Build it in the in-app adapter in Phase 1 | 1.9.2, 1.6.3 |
-| 5 | FR-28's hash chain conflicts with FR-21's expiry and per-project deletion: deleting rows breaks a simple chain | Chain record hashes and keep tombstones, so a deletion leaves the chain verifiable | 1.4.2, 1.4.4 |
-| 6 | Open questions still lists 12 questions the owner settled on 22 November | Keep only the six still open | 0.1.1 |
-| 7 | The MCP elicitation question looks moot, since the PRD also says approvals never happen inside a CLI | Confirm, then drop the question | 0.1.1 |
-| 8 | Gate 1 needs an independent sandbox review, but no reviewer is named, and there is a single owner | Decided: a second model family reviews for Gate 1, and a paid human review follows before real client data or writes | 1.9.7, G.10 |
-| 9 | No app is named for the in-app adapter (FR-9), and the eval's code arm needs it too | Decided: a small test app in this repo. Record it in the decisions table | 1.9.1, 1.9.2 |
-| 10 | The Build plan places only the functional requirements. The non-functional requirements and Governance controls have no workstream, and backups appear only in the Phase 4 restore test | Place them as this list does, and start daily backups in Phase 1, when the audit log first holds data | 1.4.5, G.1 to G.9 |
-| 11 | FR-44's urgent notifications need the link-only email from Phase 1, which the Build plan does not name | Build it in workstream 1.6 | 1.6.7 |
-| 12 | FR-41's per-session attempt count applies only through the MCP adapter, which arrives in Phase 2 | Build that part in Phase 2 | 2.1.5 |
-| 13 | FR-46's security-exception option opens the incident runbook from Phase 1, but the runbook is drilled only in Phase 4 | Write the runbook before Gate 1 | G.4, 1.9.8 |
-| 14 | FR-37 writes code through the GitHub API, so local commit hooks never run on it, and the owner's GitHub Free plan cannot enforce "CI must pass before merge" on private repos | Decide the merge protection before the first code write; GitHub Pro (about $4 a month) is needed only if private repos are in scope. Also upgrade if private-repo Actions minutes pass half the monthly allowance | 3.1.9, 3.2.1 |
-| 15 | Backups start in Phase 1 but the first restore test is in Phase 4, and alerts are turned on only in Phase 4, after writes go live in Phase 3 | Test one restore when backups start, and turn alerts on before the first write. The drill stays in Phase 4 | 1.4.5, 3.1.10, 4.1.2 |
-| 16 | Sandbox limits, quotas, the unusually-large argument size and the significant success drop are required but have no values | Set each as a number in Phase 0 | 0.1.12, 0.2.6 |
+| # | Issue | Proposed fix | Tasks | PRD fix |
+|---|---|---|---|---|
+| 1 | Build plan 0.2 is done when all three arms have run, but the code tool does not exist in Phase 0, and the Phase 0 row names only two arms | Run two arms in Phase 0 and the code arm before Gate 1 | 0.2.5, 1.9.5 | Accepted 2026-11-22 |
+| 2 | FR-23, FR-24 and Build plan 1.1 assume a container or a local process (image digests, "cannot read outside its folder"), but the chosen host is Workers | Restate them in Workers terms: binding allowlist, secret store, pinned compatibility date. The local-listener checks apply only if a local stdio server is added | 1.1.1, 1.1.6 | Open: owner to review |
+| 3 | FR-1 lists `completed`, `paused` and `error`, but the output contract adds `refused` | Add `refused` to FR-1 | 0.1.4 | Accepted 2026-11-22 |
+| 4 | FR-16 makes wrapped tools directly callable when Code Mode is off, but no workstream builds that direct-call path | Build it in the in-app adapter in Phase 1 | 1.9.2, 1.6.3 | Accepted 2026-11-22 |
+| 5 | FR-28's hash chain conflicts with FR-21's expiry and per-project deletion: deleting rows breaks a simple chain | Chain record hashes and keep tombstones, so a deletion leaves the chain verifiable | 1.4.2, 1.4.4 | Open: owner to review |
+| 6 | Open questions still lists 12 questions the owner settled on 22 November | Keep only the six still open | 0.1.1 | Accepted 2026-11-22 |
+| 7 | The MCP elicitation question looks moot, since the PRD also says approvals never happen inside a CLI | Confirm, then drop the question | 0.1.1 | Accepted 2026-11-22 |
+| 8 | Gate 1 needs an independent sandbox review, but no reviewer is named, and there is a single owner | Decided: a second model family reviews for Gate 1, and a paid human review follows before real client data or writes | 1.9.7, G.10 | Accepted 2026-11-22 |
+| 9 | No app is named for the in-app adapter (FR-9), and the eval's code arm needs it too | Decided: a small test app in this repo. Record it in the decisions table | 1.9.1, 1.9.2 | Accepted 2026-11-22 |
+| 10 | The Build plan places only the functional requirements. The non-functional requirements and Governance controls have no workstream, and backups appear only in the Phase 4 restore test | Place them as this list does, and start daily backups in Phase 1, when the audit log first holds data | 1.4.5, G.1 to G.9 | Accepted 2026-11-22 |
+| 11 | FR-44's urgent notifications need the link-only email from Phase 1, which the Build plan does not name | Build it in workstream 1.6 | 1.6.7 | Accepted 2026-11-22 |
+| 12 | FR-41's per-session attempt count applies only through the MCP adapter, which arrives in Phase 2 | Build that part in Phase 2 | 2.1.5 | Accepted 2026-11-22 |
+| 13 | FR-46's security-exception option opens the incident runbook from Phase 1, but the runbook is drilled only in Phase 4 | Write the runbook before Gate 1 | G.4, 1.9.8 | Accepted 2026-11-22 |
+| 14 | FR-37 writes code through the GitHub API, so local commit hooks never run on it, and the owner's GitHub Free plan cannot enforce "CI must pass before merge" on private repos | Decide the merge protection before the first code write; GitHub Pro (about $4 a month) is needed only if private repos are in scope. Also upgrade if private-repo Actions minutes pass half the monthly allowance | 3.1.9, 3.2.1 | Accepted 2026-11-22 |
+| 15 | Backups start in Phase 1 but the first restore test is in Phase 4, and alerts are turned on only in Phase 4, after writes go live in Phase 3 | Test one restore when backups start, and turn alerts on before the first write. The drill stays in Phase 4 | 1.4.5, 3.1.10, 4.1.2 | Accepted 2026-11-22 |
+| 16 | Sandbox limits, quotas, the unusually-large argument size and the significant success drop are required but have no values | Set each as a number in Phase 0 | 0.1.12, 0.2.6 | Accepted 2026-11-22 |
