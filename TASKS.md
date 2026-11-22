@@ -40,7 +40,7 @@ Exit: a baseline report per model and task type, and the threat model signed off
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 0.2.1 | Add a lockfile, TypeScript as a dev dependency, and CI that blocks on any failing test to the ExecWard repo | NFR: test coverage; FR-23 | — | A deliberately failing test blocks the merge | P0 | Not started |
+| 0.2.1 | Add a lockfile, TypeScript as a dev dependency, and CI that blocks on any failing test to the ExecWard repo | NFR: test coverage; FR-23 | — | A deliberately failing test blocks the merge. So far: blocked locally at the pre-push gate (verified 2026-11-22); the CI half needs a GitHub remote | P0 | In progress |
 | 0.2.2 | Build the eval harness: run a task on a model and record provider-reported usage | Evaluation plan steps 2 and 3; Token metering: measured saving | 0.2.1, 0.1.5 | One task runs on both models, recording input and output tokens, turns, wall-clock time, success and failure causes | — | Not started |
 | 0.2.3 | Write 20 to 40 tasks with checkable outcomes on the GitHub tools | Evaluation plan step 1 | 0.1.5 | Each task has an automatic pass or fail check and a type: bounded tool-heavy or exploratory | — | Not started |
 | 0.2.4 | Write the first golden tasks | Phase 0 scope; FR-45 | 0.2.3 | Each has a known answer that is checked automatically | P1 | Not started |
