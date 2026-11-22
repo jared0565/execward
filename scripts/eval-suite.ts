@@ -9,20 +9,23 @@
  * --out   Where to write one JSON line per attempt. Default eval-results/<time>.jsonl.
  * --arm   direct or tool_search. May be repeated to run both. Default direct.
  * --direct-route  Skip OpenRouter and call each provider's own API.
+ * --resume  With --out naming an existing file: keep its results and run only what is missing.
  * --golden  Run the golden tasks only (task 0.2.4).
  * --dry-run  Print the plan (how many runs of what) and stop. Makes no model call.
  * --only  Run just this task id. May be repeated.
- * --show-answers  Print each final answer to the console (never to the file).
+ * --show-answers  Also print each final answer to the console. Answers are always saved in the file.
+ * --show-tool-errors  Print each tool call that returned an error, with its arguments.
  *
  * Exits 1 if a key is missing (before any call) or the cap stopped the run early.
  * A wrong answer is a result, not an error, and does not change the exit code.
  */
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { toolSearchBackend } from "../src/eval/arms/tool-search";
 import { githubFixtureBackend } from "../src/eval/fixtures/github-backend";
 import { buildWorld } from "../src/eval/fixtures/world";
 import { assertKeysPresent } from "../src/eval/preflight";
+import { finalRuns, type ReportRow } from "../src/eval/report";
 import { runWithFallback } from "../src/eval/routes";
 import { buildGithubTasks } from "../src/eval/tasks/github-tasks";
 import { buildGoldenTasks } from "../src/eval/tasks/golden";
@@ -33,7 +36,7 @@ import {
   REQUIRED_KEYS,
   type Target,
 } from "../src/eval/targets";
-import type { Arm, EvalTask, RunRecord } from "../src/eval/types";
+import type { Arm, EvalTask, RunRecord, ToolBackend } from "../src/eval/types";
 
 const CONCURRENCY = 4;
 
@@ -70,20 +73,9 @@ async function main(): Promise<number> {
   const world = buildWorld();
   const backend = githubFixtureBackend(world);
   const showAnswers = process.argv.includes("--show-answers");
+  const showToolErrors = process.argv.includes("--show-tool-errors");
   const tasks = (process.argv.includes("--golden") ? buildGoldenTasks(world) : buildGithubTasks(world))
-    .filter((task) => only.length === 0 || only.includes(task.id))
-    .map((task): EvalTask =>
-      showAnswers
-        ? {
-            ...task,
-            check(answer) {
-              const passed = task.check(answer);
-              console.log(`answer to ${task.id} (${passed ? "pass" : "fail"}, expected ${task.expected ?? "?"}): ${answer}`);
-              return passed;
-            },
-          }
-        : task,
-    );
+    .filter((task) => only.length === 0 || only.includes(task.id));
   if (tasks.length === 0) throw new Error("Cannot start: no task matches --only");
   // Say what is about to be paid for, so a wrong selection is seen at once.
   const models = BASELINE_TARGET_NAMES.length;
@@ -101,6 +93,35 @@ async function main(): Promise<number> {
   mkdirSync(dirname(out), { recursive: true });
 
   let spentUsd = 0;
+  if (process.argv.includes("--resume") && existsSync(out)) {
+    // Carry on an interrupted run: keep what the file already holds, count its cost
+    // towards the cap, and start only the runs that have no result yet.
+    const earlier: ReportRow[] = [];
+    for (const line of readFileSync(out, "utf8").split("\n")) {
+      if (line.trim() === "") continue;
+      try {
+        earlier.push(JSON.parse(line) as ReportRow);
+      } catch {
+        console.log("resume: skipped one unreadable line (an interrupted write)");
+      }
+    }
+    spentUsd = earlier.reduce((total, row) => total + row.costUsd, 0);
+    const key = (target: string, arm: Arm, taskId: string, run: number): string => [target, arm, taskId, run].join("|");
+    const done = new Set(
+      finalRuns(earlier)
+        .filter((row) => row.failureCause !== "provider_error")
+        .map((row) => key(row.target, row.arm, row.taskId, row.run)),
+    );
+    const before = jobs.length;
+    for (let index = jobs.length - 1; index >= 0; index -= 1) {
+      const job = jobs[index] as Job;
+      if (done.has(key(job.target.name, job.arm, job.task.id, job.run))) jobs.splice(index, 1);
+    }
+    console.log(
+      `resume: ${before - jobs.length} runs already in ${out} ($${spentUsd.toFixed(4)} spent), ${jobs.length} to go. ` +
+        "The summary below covers this session only; use baseline-report.ts for the whole file.",
+    );
+  }
   let skipped = 0;
   const results: { job: Job; record: RunRecord }[] = [];
   const worker = async (): Promise<void> => {
@@ -111,12 +132,36 @@ async function main(): Promise<number> {
       }
       const routes = directRoute ? job.target.routes.slice(1) : job.target.routes;
       // The tool-search wrapper remembers what a run has found, so each run gets its own.
-      const runBackend = job.arm === "tool_search" ? toolSearchBackend(backend) : backend;
-      const routed = await runWithFallback(job.task, routes, runBackend, { arm: job.arm });
+      const armBackend = job.arm === "tool_search" ? toolSearchBackend(backend) : backend;
+      const runBackend: ToolBackend = !showToolErrors
+        ? armBackend
+        : {
+            definitions: armBackend.definitions,
+            call: (name, args) =>
+              armBackend.call(name, args).catch((error: unknown) => {
+                console.log(`tool error in ${job.task.id} [${job.arm}] on ${job.target.name}: ${name}(${JSON.stringify(args)}) -> ${String(error)}`);
+                throw error;
+              }),
+          };
+      // Keep the final answer beside the result, so a changed check can re-score
+      // old runs without paying for them again. The data is the invented fixture.
+      let answer: string | null = null;
+      const task: EvalTask = {
+        ...job.task,
+        check(given) {
+          answer = given;
+          const passed = job.task.check(given);
+          if (showAnswers) {
+            console.log(`answer to ${job.task.id} [${job.arm}] on ${job.target.name} (${passed ? "pass" : "fail"}, expected ${job.task.expected ?? "?"}): ${given}`);
+          }
+          return passed;
+        },
+      };
+      const routed = await runWithFallback(task, routes, runBackend, { arm: job.arm });
       for (const attempt of routed.attempts) {
         const cost = costUsd(job.target, attempt);
         spentUsd += cost;
-        appendFileSync(out, `${JSON.stringify({ target: job.target.name, run: job.run, costUsd: cost, ...attempt })}\n`);
+        appendFileSync(out, `${JSON.stringify({ target: job.target.name, run: job.run, costUsd: cost, ...attempt, answer: attempt === routed.record ? answer : null })}\n`);
       }
       results.push({ job, record: routed.record });
     }

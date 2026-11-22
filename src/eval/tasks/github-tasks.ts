@@ -111,7 +111,7 @@ export function buildGithubTasks(world: World): EvalTask[] {
   count("commits-touching-invoice", bounded, `How many commits in ${full(billing)} changed the file src/invoice.ts?`,
     billing.commits.filter((commit) => commit.files.some((file) => file.filename === "src/invoice.ts")).length);
 
-  count("commit-authors-dashboard", bounded, `How many different people have authored commits in ${full(dashboard)}?`,
+  count("commit-authors-dashboard", bounded, `How many different people have authored commits on the main branch of ${full(dashboard)}?`,
     new Set(dashboard.commits.map((commit) => commit.author)).size);
 
   count("open-security-org", bounded, `Across all repositories of the ${world.owner} organisation (${repoNames.join(", ")}), how many open issues or pull requests have the label "security"?`,
