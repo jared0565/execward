@@ -7,6 +7,8 @@
  * --cap   US dollars. Required, so that no run starts without a stated limit.
  * --runs  Times each task runs on each model. Default 1.
  * --out   Where to write one JSON line per attempt. Default eval-results/<time>.jsonl.
+ * --arm   direct or tool_search. May be repeated to run both. Default direct.
+ * --direct-route  Skip OpenRouter and call each provider's own API.
  * --golden  Run the golden tasks only (task 0.2.4).
  * --dry-run  Print the plan (how many runs of what) and stop. Makes no model call.
  * --only  Run just this task id. May be repeated.
@@ -17,6 +19,7 @@
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { toolSearchBackend } from "../src/eval/arms/tool-search";
 import { githubFixtureBackend } from "../src/eval/fixtures/github-backend";
 import { buildWorld } from "../src/eval/fixtures/world";
 import { assertKeysPresent } from "../src/eval/preflight";
@@ -30,7 +33,7 @@ import {
   REQUIRED_KEYS,
   type Target,
 } from "../src/eval/targets";
-import type { EvalTask, RunRecord } from "../src/eval/types";
+import type { Arm, EvalTask, RunRecord } from "../src/eval/types";
 
 const CONCURRENCY = 4;
 
@@ -47,6 +50,7 @@ interface Job {
   readonly target: Target;
   readonly task: EvalTask;
   readonly run: number;
+  readonly arm: Arm;
 }
 
 async function main(): Promise<number> {
@@ -56,6 +60,11 @@ async function main(): Promise<number> {
   }
   const runs = Number(option("runs")[0] ?? 1);
   const only = option("only");
+  const arms = (option("arm").length === 0 ? ["direct"] : option("arm")) as Arm[];
+  for (const arm of arms) {
+    if (arm !== "direct" && arm !== "tool_search") throw new Error(`Cannot start: unknown arm ${String(arm)}`);
+  }
+  const directRoute = process.argv.includes("--direct-route");
   const out = option("out")[0] ?? `eval-results/${new Date().toISOString().replaceAll(":", "-")}.jsonl`;
 
   const world = buildWorld();
@@ -79,14 +88,15 @@ async function main(): Promise<number> {
   // Say what is about to be paid for, so a wrong selection is seen at once.
   const models = BASELINE_TARGET_NAMES.length;
   console.log(
-    `plan: ${tasks.length * models * runs} runs = ${tasks.length} tasks x ${models} models x ${runs} runs, cap $${capUsd}`,
+    `plan: ${tasks.length * models * runs * arms.length} runs = ${tasks.length} tasks x ${models} models x ${arms.length} arms (${arms.join(", ")}) x ${runs} runs, ` +
+      `${directRoute ? "direct provider APIs" : "OpenRouter first"}, cap $${capUsd}`,
   );
   if (process.argv.includes("--dry-run")) return 0;
   assertKeysPresent(process.env, REQUIRED_KEYS);
   const targets = baselineTargets();
   const jobs: Job[] = [];
   for (let run = 1; run <= runs; run += 1) {
-    for (const task of tasks) for (const target of targets) jobs.push({ target, task, run });
+    for (const task of tasks) for (const target of targets) for (const arm of arms) jobs.push({ target, task, run, arm });
   }
   mkdirSync(dirname(out), { recursive: true });
 
@@ -99,7 +109,10 @@ async function main(): Promise<number> {
         skipped += 1;
         continue;
       }
-      const routed = await runWithFallback(job.task, job.target.routes, backend, { arm: "direct" });
+      const routes = directRoute ? job.target.routes.slice(1) : job.target.routes;
+      // The tool-search wrapper remembers what a run has found, so each run gets its own.
+      const runBackend = job.arm === "tool_search" ? toolSearchBackend(backend) : backend;
+      const routed = await runWithFallback(job.task, routes, runBackend, { arm: job.arm });
       for (const attempt of routed.attempts) {
         const cost = costUsd(job.target, attempt);
         spentUsd += cost;
@@ -110,16 +123,16 @@ async function main(): Promise<number> {
   };
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
-  for (const target of targets) {
-    const mine = results.filter((result) => result.job.target === target).map((result) => result.record);
+  for (const target of targets) for (const arm of arms) {
+    const mine = results.filter((result) => result.job.target === target && result.job.arm === arm).map((result) => result.record);
     const passed = mine.filter((record) => record.success).length;
     const sum = (pick: (record: RunRecord) => number): number => mine.reduce((total, record) => total + pick(record), 0);
     console.log(
-      `${target.name}: ${passed}/${mine.length} correct, ${sum((r) => r.inputTokens)} input and ${sum((r) => r.outputTokens)} output tokens, ` +
+      `${target.name} [${arm}]: ${passed}/${mine.length} correct, ${sum((r) => r.inputTokens)} input and ${sum((r) => r.outputTokens)} output tokens, ` +
         `$${sum((r) => costUsd(target, r)).toFixed(4)}, ${mine.filter((r) => r.provider !== "openrouter").length} runs on the fallback route`,
     );
     for (const { job, record } of results) {
-      if (job.target === target && !record.success) {
+      if (job.target === target && job.arm === arm && !record.success) {
         console.log(`  failed: ${job.task.id} (${record.failureCause}${record.failureDetail === null ? "" : `: ${record.failureDetail}`}) after ${record.turns} turns`);
       }
     }
