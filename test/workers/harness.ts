@@ -5,6 +5,7 @@
  * do. It is never deployed; production has no route that runs a script yet.
  */
 import type { ExecutionLimits, SandboxHost } from "../../src/executor";
+import { runCodeTool } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
 
 interface RunBody {
@@ -38,8 +39,19 @@ function scriptedHost(calls: { path: string; args: unknown }[]): SandboxHost {
 
 export default {
   async fetch(request: Request, env: { LOADER: WorkerLoader }): Promise<Response> {
-    const body = (await request.json()) as RunBody;
     const calls: { path: string; args: unknown }[] = [];
+    if (new URL(request.url).pathname === "/code-tool") {
+      // The whole run path: input contract, static check, executor, output contract.
+      let runs = 0;
+      const output = await runCodeTool(await request.json(), {
+        executor: dynamicWorkerExecutor(env.LOADER),
+        hostFor: () => scriptedHost(calls),
+        newRunId: () => `test-run-${++runs}`,
+        now: () => Date.now(),
+      });
+      return Response.json({ output, calls });
+    }
+    const body = (await request.json()) as RunBody;
     const outcome = await dynamicWorkerExecutor(env.LOADER).execute({
       runId: "test-run",
       script: body.script,

@@ -8,6 +8,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { unstable_startWorker } from "wrangler";
+import { codeToolOutputSchema, type CodeToolOutput } from "../src/contracts/code-tool";
 import type { ExecutionLimits, ExecutionOutcome } from "../src/executor";
 import { LANGUAGE_BUILTINS, SANDBOX_GLOBALS } from "../src/contracts/sandbox-api";
 
@@ -175,5 +176,48 @@ describe("the Dynamic Worker executor, in the local Workers runtime", { timeout:
   it("reports a final value that cannot be written as JSON", async () => {
     const reply = await run(`const a = {}; a.self = a; return a;`);
     expect(failure(reply).kind).toBe("script_error");
+  });
+});
+
+describe("the code tool end to end, in the local Workers runtime", { timeout: 30_000 }, () => {
+  async function codeTool(input: unknown): Promise<{ output: CodeToolOutput; calls: readonly { path: string }[] }> {
+    const response = await worker.fetch("http://harness.invalid/code-tool", { method: "POST", body: JSON.stringify(input) });
+    const reply = (await response.json()) as { output: unknown; calls: { path: string }[] };
+    return { output: codeToolOutputSchema.parse(reply.output), calls: reply.calls };
+  }
+
+  it("runs a script and returns a reply that matches the output contract", async () => {
+    const { output, calls } = await codeTool({
+      script: `const pages = await Promise.all([1, 2].map((page) => tools.test_echo({ page })));
+console.log("pages", pages.length);
+return pages.map((p) => p.args.page);`,
+      project: "demo",
+    });
+    expect(output).toMatchObject({
+      status: "completed",
+      result: [1, 2],
+      truncated: false,
+      logs: ["pages 2"],
+      report: { callsByTool: { test_echo: 2 }, errors: [] },
+    });
+    expect(calls.length).toBe(2);
+  });
+
+  it("refuses a script at the static check, inside the runtime, before any isolate is loaded", async () => {
+    const { output, calls } = await codeTool({ script: `return (await fetch("https://example.com")).status;`, project: "demo" });
+    expect(output).toMatchObject({ status: "refused", error: { code: "static_check_failed", message: '"fetch" is not part of the Sandbox API', line: 1 } });
+    expect(calls).toEqual([]);
+  });
+
+  it("returns a script's own error with its line", async () => {
+    const { output } = await codeTool({ script: `const a = await tools.test_echo({});
+throw new TypeError("bad shape");`, project: "demo" });
+    expect(output).toMatchObject({ status: "error", error: { code: "script_error", message: "bad shape", line: 2 }, report: { callsByTool: { test_echo: 1 } } });
+  });
+
+  it("returns an oversized final value with the truncation notice", async () => {
+    const { output } = await codeTool({ script: `return "x".repeat(100000);`, project: "demo" });
+    expect(output).toMatchObject({ status: "completed", truncated: true });
+    if (output.status === "completed") expect((output.result as { notice: string }).notice).toContain("Return less");
   });
 });
