@@ -10,7 +10,7 @@ Task IDs extend the Build plan's workstream numbers: 1.2.3 is the third task in 
 
 Priority is the highest priority among the PRD requirements a task traces to; a dash means it traces to none (non-functional, governance or decision work). Status is one of Not started, In progress, Blocked or Done.
 
-**Decided 2026-11-22.** The in-app adapter runs in a small test app in this repo (1.9.1). Gate 1's sandbox review is done by a second model family (1.9.7), and a paid human review follows before real client data or writes (G.10). The flag fixes go into the PRD as suggestions for the owner to accept (0.1.13). Dynamic Workers are confirmed as the sandbox (0.1.2). Oversized tasks are split into smaller rows when their phase starts, not before.
+**Decided 2026-11-22.** The in-app adapter runs in a small test app in this repo (1.9.1). Gate 1's sandbox review is done by a second model family (1.9.7), and a paid human review follows before real client data or writes (G.10). The flag fixes go into the PRD as suggestions for the owner to accept (0.1.13). Dynamic Workers are confirmed as the sandbox (0.1.2). Oversized tasks are split into smaller rows when their phase starts, not before. The repo is public at github.com/jared0565/execward. Every change reaches main through a pull request with green CI; direct pushes are refused.
 
 **Cost reminders.** Cloudflare Workers Paid ($5 a month) is needed from the first sandbox test in Phase 1 (task 1.2.1), because Dynamic Workers run only on that plan; runs cost about $0.002 each after the first 1,000 a month. GitHub Free is enough through Phase 2. Start GitHub Pro (about $4 a month) before task 3.2.1, when ExecWard first writes code to a private repo, or earlier if private-repo Actions minutes pass half the monthly allowance (GitHub > Settings > Billing). See task 3.1.9 and flag 14. A paid human security review (G.10) comes before real client data or writes.
 
@@ -40,7 +40,7 @@ Exit: a baseline report per model and task type, and the threat model signed off
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 0.2.1 | Add a lockfile, TypeScript as a dev dependency, and CI that blocks on any failing test to the ExecWard repo | NFR: test coverage; FR-23 | — | A deliberately failing test blocks the merge. So far: blocked locally at the pre-push gate (verified 2026-11-22); the CI half needs a GitHub remote | P0 | In progress |
+| 0.2.1 | Add a lockfile, TypeScript as a dev dependency, and CI that blocks on any failing test to the ExecWard repo | NFR: test coverage; FR-23 | — | A deliberately failing test blocks the merge. Done 2026-11-22: Aramid blocks a failing test at push; on GitHub, main accepts only pull requests whose `test` check passed, admins included | P0 | Done |
 | 0.2.2 | Build the eval harness: run a task on a model and record provider-reported usage | Evaluation plan steps 2 and 3; Token metering: measured saving | 0.2.1, 0.1.5 | One task runs on both models, recording input and output tokens, turns, wall-clock time, success and failure causes | — | Not started |
 | 0.2.3 | Write 20 to 40 tasks with checkable outcomes on the GitHub tools | Evaluation plan step 1 | 0.1.5 | Each task has an automatic pass or fail check and a type: bounded tool-heavy or exploratory | — | Not started |
 | 0.2.4 | Write the first golden tasks | Phase 0 scope; FR-45 | 0.2.3 | Each has a known answer that is checked automatically | P1 | Not started |
