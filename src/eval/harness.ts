@@ -1,3 +1,4 @@
+import { ModelOutputError } from "./types";
 import type {
   Arm,
   EvalTask,
@@ -44,6 +45,8 @@ export async function runTask(
   let outputTokens = 0;
   let toolCalls = 0;
   let toolErrors = 0;
+  let reportedCostUsd = 0;
+  let everyTurnReportedCost = true;
 
   const finish = (
     failureCause: FailureCause | null,
@@ -54,9 +57,11 @@ export async function runTask(
     arm: options.arm,
     provider: provider.provider,
     model: provider.model,
+    effort: provider.effort ?? "default",
     success: failureCause === null,
     failureCause,
     failureDetail,
+    reportedCostUsd: turns > 0 && everyTurnReportedCost ? reportedCostUsd : null,
     turns,
     inputTokens,
     outputTokens,
@@ -74,11 +79,16 @@ export async function runTask(
         tools: backend.definitions,
       });
     } catch (error) {
-      return finish("provider_error", describeError(error));
+      return finish(
+        error instanceof ModelOutputError ? "model_stopped" : "provider_error",
+        describeError(error),
+      );
     }
     turns += 1;
     inputTokens += turn.usage.inputTokens;
     outputTokens += turn.usage.outputTokens;
+    if (turn.usage.reportedCostUsd === undefined) everyTurnReportedCost = false;
+    else reportedCostUsd += turn.usage.reportedCostUsd;
 
     if (turn.toolCalls.length === 0) {
       if (turn.text.trim() === "") return finish("no_answer");
