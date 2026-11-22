@@ -22,7 +22,7 @@ Exit: a baseline report per model and task type, and the threat model signed off
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 0.1.1 | Mark the nine decisions confirmed and cut Open questions to the six still open | Decisions table; Open questions; Flags 6, 7 | — | Each decision row reads confirmed; Open questions lists only open items | — | Not started |
+| 0.1.1 | Mark the nine decisions confirmed and cut Open questions to the six still open | Decisions table; Open questions; Flags 6, 7 | — | Each decision row reads confirmed; Open questions lists only open items. Done 2026-11-22 (PRD revision 195): the table's column now reads "Decision (confirmed)" for all ten rows; three rows that still said "unchecked" or "no source" now carry the results of tasks 0.1.2, 0.1.5 and 0.1.7; Open questions lists the four still open (the personal data duties check was answered by 0.1.7, so four remain, not six) | — | Done |
 | 0.1.2 | Check Dynamic Workers' release status, limits and pricing | Decision: sandbox and hosting; Risk: platform dependence | — | Status, CPU, memory and time limits and price per run recorded with sources; go or no-go noted. Done: go, owner decision 2026-11-22; see docs/research/0.1.2-dynamic-workers.md | — | Done |
 | 0.1.3 | Define the executor interface and name a second implementation path | Decision: sandbox and hosting; Risk: platform dependence | 0.1.2 | Interface written; a second sandbox from the Sandbox choice table checked as feasible. Done 2026-11-22: `src/executor.ts`; fallback is Cloudflare Sandbox SDK containers, see docs/decisions/0.1.3-executor-interface.md | — | Done |
 | 0.1.4 | Fix the five interface contracts as versioned schemas | Interface contracts; FR-1; FR-41; Flag 3 | 0.1.3, 0.2.1 | `code` input and output, sandbox API, policy record and error codes (each marked retryable or not) checked in and signed off. Done 2026-11-22: `src/contracts/`, version 1.0.0, see docs/decisions/0.1.4-interface-contracts.md | P0 | Done |
@@ -242,7 +242,7 @@ These run alongside the phases, at the cadence the Governance section sets. G.4 
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| G.1 | Name the accountable owner for the policy table, allowlist, quotas and kill switch | Governance: accountable owner | — | The owner is named in the PRD before Phase 1 | — | Not started |
+| G.1 | Name the accountable owner for the policy table, allowlist, quotas and kill switch | Governance: accountable owner | — | The owner is named in the PRD before Phase 1. Done 2026-11-22 (PRD revision 196): the project owner is named in the Governance table as the single accountable owner for all four; no one else, and no model, changes them without the owner | — | Done |
 | G.2 | Keep the upstream server list with publisher, pinned version and definition hash | Governance: upstream server approval; FR-22; FR-23 | 1.5.4 | The list is updated on every add or change | P0 | Not started |
 | G.3 | Re-score the risk register monthly and after any incident | Governance: risk register | 0.1.10 | A monthly entry is logged | — | Not started |
 | G.4 | Write the incident runbook and test it quarterly | Governance: incident response; FR-46; Flag 13 | 1.6.5 | Kill switch, credential revocation, log preservation, client notice and review steps are written before Gate 1 | P0 | Not started |
