@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { CONTRACT_VERSION } from "../src/contracts/version";
 import { handleRequest } from "../src/worker";
 import { ALLOWED_BINDINGS, COMPATIBILITY_DATE } from "../src/worker/bindings";
 import { parseWorkerConfig, stripJsonComments, workerConfigProblems } from "../src/worker/config-check";
@@ -109,7 +110,7 @@ describe("this repository's Worker (task 1.1.1)", () => {
   it("answers the health check and nothing else", async () => {
     const health = handleRequest(new Request("https://execward.invalid/health"));
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ name: "execward", contracts: "1.0.0" });
+    expect(await health.json()).toMatchObject({ name: "execward", contracts: CONTRACT_VERSION });
     expect(handleRequest(new Request("https://execward.invalid/")).status).toBe(404);
     expect(handleRequest(new Request("https://execward.invalid/health", { method: "POST" })).status).toBe(404);
   });
