@@ -1,0 +1,9 @@
+# Graphite
+graph-out/
+**/.cache/graphite/
+**/.graphite/
+.graphite-daemon/
+.githooks/
+.aramid/
+.graphite*
+.cache/
