@@ -12,8 +12,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      # Actions are pinned to a commit, not a tag: a tag can be moved to other code (FR-23).
+      # The supply-chain check below fails if one is not. Update the hash and the comment together.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           cache: npm
@@ -27,3 +29,8 @@ jobs:
       # dependency pin, or the model list. Do not add a path filter to this job.
       - name: Adversarial suite
         run: npm run adversarial
+      # FR-23: exact pins, lockfile hashes, pinned actions, and an SBOM that matches.
+      - name: Build the SBOM
+        run: npm run sbom
+      - name: Supply-chain check
+        run: npm run check:supply-chain -- --sbom sbom.cdx.json

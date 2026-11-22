@@ -1,0 +1,47 @@
+name: Release
+
+# A release is a version tag pushed to the repository, for example v0.1.0.
+# The build fails without a lockfile (npm ci), and the release carries an SBOM (FR-23).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to create the GitHub release and attach the SBOM. Nothing else is granted.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Adversarial suite
+        run: npm run adversarial
+      - name: Check the tag matches package.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$version" ]; then
+            echo "Tag $TAG does not match package.json version $version" >&2
+            exit 1
+          fi
+      - name: Build the SBOM
+        run: npm run sbom
+      - name: Supply-chain check
+        run: npm run check:supply-chain -- --sbom sbom.cdx.json
+      - name: Publish the release with its SBOM
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" sbom.cdx.json --title "$TAG" --generate-notes --verify-tag
