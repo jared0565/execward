@@ -10,9 +10,9 @@ Task IDs extend the Build plan's workstream numbers: 1.2.3 is the third task in 
 
 Priority is the highest priority among the PRD requirements a task traces to; a dash means it traces to none (non-functional, governance or decision work). Status is one of Not started, In progress, Blocked or Done.
 
-**Decided 2026-11-22.** The in-app adapter runs in a small test app in this repo (1.9.1). Gate 1's sandbox review is done by a second model family (1.9.7), and a paid human review follows before real client data or writes (G.10). The flag fixes go into the PRD as suggestions for the owner to accept (0.1.13).
+**Decided 2026-11-22.** The in-app adapter runs in a small test app in this repo (1.9.1). Gate 1's sandbox review is done by a second model family (1.9.7), and a paid human review follows before real client data or writes (G.10). The flag fixes go into the PRD as suggestions for the owner to accept (0.1.13). Dynamic Workers are confirmed as the sandbox (0.1.2). Oversized tasks are split into smaller rows when their phase starts, not before.
 
-**Cost reminder (flag 14).** GitHub Free is enough through Phase 2. Start GitHub Pro (about $4 a month) before task 3.2.1, when ExecWard first writes code to a private repo, or earlier if private-repo Actions minutes pass half the monthly allowance (GitHub > Settings > Billing). See task 3.1.9.
+**Cost reminders.** Cloudflare Workers Paid ($5 a month) is needed from the first sandbox test in Phase 1 (task 1.2.1), because Dynamic Workers run only on that plan; runs cost about $0.002 each after the first 1,000 a month. GitHub Free is enough through Phase 2. Start GitHub Pro (about $4 a month) before task 3.2.1, when ExecWard first writes code to a private repo, or earlier if private-repo Actions minutes pass half the monthly allowance (GitHub > Settings > Billing). See task 3.1.9 and flag 14. A paid human security review (G.10) comes before real client data or writes.
 
 ## Phase 0: Baseline
 
@@ -23,7 +23,7 @@ Exit: a baseline report per model and task type, and the threat model signed off
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
 | 0.1.1 | Mark the nine decisions confirmed and cut Open questions to the six still open | Decisions table; Open questions; Flags 6, 7 | — | Each decision row reads confirmed; Open questions lists only open items | — | Not started |
-| 0.1.2 | Check Dynamic Workers' release status, limits and pricing | Decision: sandbox and hosting; Risk: platform dependence | — | Status, CPU, memory and time limits and price per run recorded with sources; go or no-go noted | — | Not started |
+| 0.1.2 | Check Dynamic Workers' release status, limits and pricing | Decision: sandbox and hosting; Risk: platform dependence | — | Status, CPU, memory and time limits and price per run recorded with sources; go or no-go noted. Done: go, owner decision 2026-11-22; see docs/research/0.1.2-dynamic-workers.md | — | Done |
 | 0.1.3 | Define the executor interface and name a second implementation path | Decision: sandbox and hosting; Risk: platform dependence | 0.1.2 | Interface written; a second sandbox from the Sandbox choice table checked as feasible | — | Not started |
 | 0.1.4 | Fix the five interface contracts as versioned schemas | Interface contracts; FR-1; FR-41; Flag 3 | 0.1.3, 0.2.1 | `code` input and output, sandbox API, policy record and error codes (each marked retryable or not) checked in and signed off | P0 | Not started |
 | 0.1.5 | Inventory the GitHub read-only actions to wrap and draft a policy record for each | Decision: first wrapped tools; FR-32; FR-50 | 0.1.4 | Every action has a data class, tier, caller rule, and sensitive and outbound flags | P0 | Not started |
@@ -76,13 +76,13 @@ Exit: Gate 1. Security first: every P0 security requirement in place, the advers
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
 | 1.2.1 | Run scripts in a Dynamic Worker behind the executor interface, with outbound network blocked | FR-4; NFR: isolation; Sandbox API contract | 0.1.3, 1.1.1 | `fetch`, environment access and any global outside the sandbox API are refused in tests | P0 | Not started |
-| 1.2.2 | Enforce CPU, memory, wall-clock and call-count limits | FR-4 | 1.2.1 | A script over each limit ends with `timeout` or `quota_exceeded` | P0 | Not started |
+| 1.2.2 | Enforce CPU, memory, wall-clock and call-count limits | FR-4 | 1.2.1 | On a deployed test Worker, a script over each limit ends with `timeout` or `quota_exceeded`; memory is the platform's fixed 128 MB, and wall-clock and call-count limits are enforced by the host and broker | P0 | Not started |
 | 1.2.3 | Check every script before it runs | FR-33 | 1.2.1 | `eval`, the Function constructor, dynamic import, WebAssembly compilation, oversized scripts and secret patterns are refused with `static_check_failed`; the script hash is recorded | P0 | Not started |
 | 1.2.4 | Implement the `code` tool's input and output contract | FR-1; FR-5; Interface contracts | 1.2.1, 0.1.4 | Contract tests pass; an oversized final value comes back with a truncation notice | P0 | Not started |
 | 1.2.5 | Raise upstream errors inside the script and return script errors with line and message | FR-7 | 1.2.4 | An MCP isError result can be caught in the script; a thrown error reports its line | P0 | Not started |
 | 1.2.6 | Add the `assert()` helper | FR-40 | 1.2.4 | A failed assertion ends the run before the next side effect, reporting the condition and values | P0 | Not started |
 | 1.2.7 | End the run on any sandbox fault, never falling back to calls outside the sandbox | NFR: failure behaviour | 1.2.1 | An injected fault returns an error and makes no upstream call | — | Not started |
-| 1.2.8 | Pass the escape, limit and blocked-construct cases | Build plan 1.2; FR-31 | 1.2.2, 1.2.3, 0.3.2 | Those adversarial cases pass in CI | P0 | Not started |
+| 1.2.8 | Pass the escape, limit and blocked-construct cases | Build plan 1.2; FR-31 | 1.2.2, 1.2.3, 0.3.2 | Those adversarial cases pass in CI against a deployed test Worker, since local runs do not enforce isolation or limits | P0 | Not started |
 
 ### 1.3 Policy table and broker
 
