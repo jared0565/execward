@@ -95,6 +95,24 @@ test("filters and paging narrow a list the way the request says", async () => {
   expect(failed["total_count"]).toBe(billing.runs.filter((run) => run.conclusion === "failure").length);
 });
 
+test("every listed branch has a history: its own commit on top of the default branch", async () => {
+  const branches = await rows("list_branches", { owner, repo, per_page: 100 });
+  expect(branches.length).toBeGreaterThan(1);
+  for (const branch of branches) {
+    const name = branch["name"] as string;
+    const history = await rows("list_commits", { owner, repo, sha: name, per_page: 100 });
+    expect(history[0]?.["sha"], name).toBe((branch["commit"] as Row)["sha"]);
+    expect(history, name).toHaveLength(name === "main" ? 40 : 41);
+    const head = (await call("get_commit", { owner, repo, ref: name })) as Row;
+    expect(head["sha"], name).toBe(history[0]?.["sha"]);
+  }
+  const feature = branches.find((branch) => branch["name"] !== "main");
+  const pulls = await rows("list_pull_requests", { owner, repo, per_page: 100 });
+  const pull = pulls.find((candidate) => (candidate["head"] as Row)["ref"] === feature?.["name"]);
+  expect((pull?.["head"] as Row)["sha"]).toBe((feature?.["commit"] as Row)["sha"]);
+  await expect(call("list_commits", { owner, repo, sha: "no-such-branch" })).rejects.toThrow("404");
+});
+
 test("search matches words and qualifiers, and refuses a qualifier it does not know", async () => {
   const merged = (await call("search_issues", { q: `repo:${owner}/${repo} is:pr is:merged`, per_page: 100 })) as Row;
   expect(merged["total_count"]).toBe(billing.issues.filter((issue) => issue.pull?.merged).length);

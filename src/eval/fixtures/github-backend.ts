@@ -202,7 +202,8 @@ function pullShape(repo: WorldRepo, world: World, issue: WorldIssue, detail: boo
   const branch = (ref: string) => ({
     label: `${repo.owner}:${ref}`,
     ref,
-    sha: ref === repo.defaultBranch ? (repo.commits[0]?.sha ?? "") : stableNumber(`${repo.name}:${ref}`).toString(16).padStart(40, "0"),
+    // A merged or closed pull request's branch is gone from the branch list; its SHA is made up.
+    sha: repo.branches.find((candidate) => candidate.name === ref)?.sha ?? stableNumber(`${repo.name}:${ref}`).toString(16).padStart(40, "0"),
     user: { ...user(repo.owner), type: "Organization" },
     repo: repoSummary(repo),
   });
@@ -304,6 +305,32 @@ function commitShape(repo: WorldRepo, commit: WorldCommit, detail: boolean) {
   };
 }
 
+/**
+ * The commit history reachable from a branch name or a commit SHA, newest first,
+ * or undefined when there is no such ref. A feature branch is one commit, carrying
+ * its pull request's changes, on top of the default branch.
+ */
+function historyFrom(repo: WorldRepo, ref: string): WorldCommit[] | undefined {
+  if (ref === repo.defaultBranch) return [...repo.commits];
+  const branch = repo.branches.find((candidate) => candidate.name === ref);
+  const issue = repo.issues.find((candidate) => candidate.pull?.head === ref);
+  if (branch !== undefined && issue?.pull != null) {
+    const head: WorldCommit = {
+      sha: branch.sha,
+      author: issue.user,
+      date: issue.createdAt,
+      message: issue.title,
+      files: issue.pull.files,
+    };
+    return [head, ...repo.commits];
+  }
+  if (ref.length < 7) return undefined;
+  const start = repo.commits.findIndex((commit) => commit.sha.startsWith(ref));
+  if (start !== -1) return repo.commits.slice(start);
+  const tip = repo.branches.find((candidate) => candidate.sha.startsWith(ref));
+  return tip === undefined || tip.name === ref ? undefined : historyFrom(repo, tip.name);
+}
+
 /** Splits a search query into `key:value` qualifiers and free words. */
 function parseQuery(q: string, allowed: readonly string[]) {
   const qualifiers: { key: string; value: string }[] = [];
@@ -383,12 +410,9 @@ function buildTools(world: World): FixtureTool[] {
       }),
       (args) => {
         const repo = findRepo(args.owner, args.repo);
-        let commits = [...repo.commits];
-        if (args.sha !== undefined && args.sha !== repo.defaultBranch) {
-          const start = commits.findIndex((commit) => commit.sha === args.sha);
-          if (start === -1) throw new GitHubError(404, "Not Found");
-          commits = commits.slice(start);
-        }
+        const history = historyFrom(repo, args.sha ?? repo.defaultBranch);
+        if (history === undefined) throw new GitHubError(404, "Not Found");
+        let commits = history;
         const { path, author, since, until } = args;
         if (path !== undefined) commits = commits.filter((commit) => commit.files.some((file) => file.filename === path));
         if (author !== undefined) commits = commits.filter((commit) => commit.author === author);
@@ -404,12 +428,7 @@ function buildTools(world: World): FixtureTool[] {
       z.object({ ...repoArgs, ref: z.string().describe("Commit SHA (full, or at least 7 characters) or branch name") }),
       (args) => {
         const repo = findRepo(args.owner, args.repo);
-        const commit =
-          args.ref === repo.defaultBranch
-            ? repo.commits[0]
-            : args.ref.length >= 7
-              ? repo.commits.find((candidate) => candidate.sha.startsWith(args.ref))
-              : undefined;
+        const commit = historyFrom(repo, args.ref)?.[0];
         if (commit === undefined) throw new GitHubError(404, "Not Found");
         return commitShape(repo, commit, true);
       },
