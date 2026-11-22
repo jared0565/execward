@@ -29,6 +29,10 @@ jobs:
       # dependency pin, or the model list. Do not add a path filter to this job.
       - name: Adversarial suite
         run: npm run adversarial
+      # Task 1.1.1: bundles the Worker and validates wrangler.jsonc. Nothing is deployed
+      # and no Cloudflare account or credential is used.
+      - name: Build the Worker (dry run)
+        run: npm run build:worker
       # FR-23: exact pins, lockfile hashes, pinned actions, and an SBOM that matches.
       - name: Build the SBOM
         run: npm run sbom
