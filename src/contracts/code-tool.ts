@@ -50,6 +50,8 @@ export const codeToolOutputSchema = z.discriminatedUnion("status", [
     result: z.unknown(),
     /** True when the result was cut to fit the size cap (FR-5). */
     truncated: z.boolean(),
+    /** Captured `console.log` output (contract 1.2.0). Untrusted, like the result. */
+    logs: z.array(z.string()).optional(),
     report: runReportSchema,
   }),
   z.strictObject({
@@ -61,6 +63,8 @@ export const codeToolOutputSchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("error"),
     error: errorSchema,
+    /** Output captured before the run ended (contract 1.2.0). Untrusted. */
+    logs: z.array(z.string()).optional(),
     report: runReportSchema,
   }),
   z.strictObject({
