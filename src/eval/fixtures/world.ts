@@ -122,7 +122,8 @@ const LABELS = [
 ];
 
 const PROBLEMS = ["times out", "returns a wrong total", "leaks memory", "crashes on empty input", "ignores the rate limit", "logs a secret", "double-counts refunds", "fails on Windows paths"];
-const AREAS = ["invoice export", "login flow", "webhook retry", "search index", "CSV import", "audit log", "session cache", "report scheduler"];
+/** The product areas that issue and pull request titles are about. */
+export const AREAS = ["invoice export", "login flow", "webhook retry", "search index", "CSV import", "audit log", "session cache", "report scheduler"];
 const CHANGES = ["Add", "Fix", "Refactor", "Document", "Speed up", "Harden"];
 const REPLIES = ["I can reproduce this on main.", "Does this still happen after the last release?", "A fix is in review.", "This looks like a duplicate.", "Adding logs showed nothing unusual.", "Confirmed fixed, thanks."];
 

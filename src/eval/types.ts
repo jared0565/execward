@@ -88,6 +88,8 @@ export interface EvalTask {
   readonly id: string;
   readonly type: TaskType;
   readonly prompt: string;
+  /** One correct answer, as a model following the prompt would give it. */
+  readonly expected?: string;
   /** Automatic pass or fail on the final answer. */
   check(answer: string): boolean;
 }
