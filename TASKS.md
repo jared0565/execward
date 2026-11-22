@@ -1,8 +1,8 @@
 # ExecWard build tasks
 
-> Copied from the Tasks tab of the [ExecWard PRD](https://claude.ai/artifact/WEX63ZAdngc4fwBdr6EVDh#ca3b30c1-bfc6) (revision 82) on 2026-11-22.
-> "Traces to" names PRD sections and requirement IDs. Status changes made here are not
-> synced back to the PRD tab.
+> This file is the task list of record (owner decision, 2026-11-22). Update statuses here, in the same commit as the work.
+> It began as a copy of the Tasks tab of the [ExecWard PRD](https://claude.ai/artifact/WEX63ZAdngc4fwBdr6EVDh), which now points here.
+> "Traces to" names PRD sections and requirement IDs.
 
 The tasks turn the PRD's 52 requirements, its non-functional requirements, decisions and gates into buildable work, in the Build plan's security-first order. Each row traces to the PRD and names the test that proves it done. Rows waiting on an open question are marked Blocked, and Flags lists the places where the PRD needs a fix.
 
@@ -10,7 +10,7 @@ Task IDs extend the Build plan's workstream numbers: 1.2.3 is the third task in 
 
 Priority is the highest priority among the PRD requirements a task traces to; a dash means it traces to none (non-functional, governance or decision work). Status is one of Not started, In progress, Blocked or Done.
 
-**Critical path.** Two open decisions hold up Gate 1 and everything after it: the host app (1.9.1) and the sandbox reviewer (1.9.7). Settle both during Phase 0.
+**Decided 2026-11-22.** The in-app adapter runs in a small test app in this repo (1.9.1). Gate 1's sandbox review is done by a second model family (1.9.7), and a paid human review follows before real client data or writes (G.10). The flag fixes go into the PRD as suggestions for the owner to accept (0.1.13).
 
 **Cost reminder (flag 14).** GitHub Free is enough through Phase 2. Start GitHub Pro (about $4 a month) before task 3.2.1, when ExecWard first writes code to a private repo, or earlier if private-repo Actions minutes pass half the monthly allowance (GitHub > Settings > Billing). See task 3.1.9.
 
@@ -33,7 +33,7 @@ Exit: a baseline report per model and task type, and the threat model signed off
 | 0.1.9 | Verify the two unverified sources and revisit the workflow and rollout diagrams | Audit log: still open; Sources | — | Claude Code Code Mode page and LangChain post opened, their PRD rows kept or removed; both diagrams match the text | — | Not started |
 | 0.1.10 | Re-score the threat table and sign it off | Phase 0 exit; Threat model; Governance: risk register | 0.1.4, 0.1.5 | Each threat row has a likelihood, an impact and a sign-off date | — | Not started |
 | 0.1.12 | Set the numeric limits the tests need: sandbox CPU, memory, wall-clock and call-count limits, quotas and spend caps, and the argument size that counts as unusually large | FR-4; FR-27; FR-29; Flag 16 | 0.1.2 | Each limit is a number in the config or policy schema, with its reason | P0 | Not started |
-| 0.1.13 | Get the owner's decision on each flag and apply the accepted fixes to the PRD | Flags | — | Every flag row is marked accepted or rejected; each accepted fix is in the PRD text | — | Not started |
+| 0.1.13 | Accept or reject each flag fix laid in the PRD as a suggestion | Flags | — | Every suggestion in the PRD is accepted or rejected; each flag row here says which | — | In progress |
 | 0.1.11 | Sign off the Phase 0 exit | Phase 0 exit | 0.1.10, 0.2.5, 0.3.2, G.1 and every other Phase 0 task | Baseline report exists, threat model is signed off and the go or no-go from 0.2.7 is recorded; no Phase 1 build task starts before this | — | Not started |
 
 ### 0.2 Eval harness, task suite, first golden tasks
@@ -151,13 +151,13 @@ Exit: Gate 1. Security first: every P0 security requirement in place, the advers
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 1.9.1 | Choose the app and agent loop that will host the in-app adapter | FR-9; Assumptions; Flag 9 | — | Blocked: the PRD names no app. Done when the app is recorded in the decisions table | P0 | Blocked |
-| 1.9.2 | Register the `code` tool in that loop, with a direct-call path for the wrapped tools | FR-9; FR-16 | 1.9.1, 1.2.4 | The tool works with one Claude and one GPT model; with Code Mode off the same tools are called directly | P0 | Not started |
+| 1.9.1 | Record the host for the in-app adapter: a small test app in this repo (decided 2026-11-22) | FR-9; Assumptions; Flag 9 | — | The PRD's decisions table names the test app | P0 | In progress |
+| 1.9.2 | Build a minimal agent loop in this repo as the test app, and register the `code` tool in it with a direct-call path for the wrapped tools | FR-9; FR-16 | 1.9.1, 1.2.4 | The tool works with one Claude and one GPT model; with Code Mode off the same tools are called directly | P0 | Not started |
 | 1.9.3 | Export per-run metrics to the monitoring stack | NFR: observability | 1.4.1 | Latency, outcome and security events arrive per run, plus token metrics when metering is on | — | Not started |
 | 1.9.4 | Measure the latency the core adds | NFR: performance | 1.9.2, 0.2.6 | Added latency per run is reported against the budget | — | Not started |
 | 1.9.5 | Run the code-tool arm of the eval | Evaluation plan; Flag 1 | 1.9.2, 0.2.5 | Five runs per task per model; the report gives the token saving and the success difference with its confidence interval; the script failure threshold is set | — | Not started |
 | 1.9.6 | Check that the tool description and typings work for both model families | NFR: model portability | 1.9.5 | Both families pass the eval subset | — | Not started |
-| 1.9.7 | Get an independent sandbox review | Gate 1; Risk: sandbox escape; Flag 8 | 1.2.8 | Blocked: no reviewer is named. Done when the review is filed with no open critical findings | — | Blocked |
+| 1.9.7 | Have a second model family review the sandbox against the threat table | Gate 1; Risk: sandbox escape; Flag 8 | 1.2.8 | A structured review by a model family other than the one that wrote the code is filed, with no open critical findings | — | Not started |
 | 1.9.8 | Pass Gate 1, then set the meter default to summary | Gate 1; Owner's answer on the meter | 1.9.5, 1.9.6, 1.9.7, G.4 and every other Phase 1 task | Every P0 security requirement in place and the adversarial suite passing; then a token saving with no success drop beyond the threshold set in 0.2.6 | — | Not started |
 
 ## Phase 2: MCP adapter
@@ -205,7 +205,7 @@ Exit: in testing, no tier-2 action runs without approval and no write skips the 
 |---|---|---|---|---|---|---|
 | 3.1.1 | Choose how pause and resume work | NFR: replay and state; Risk: replay divergence | 2.3.4 | Replay with captured values, or a broker that holds the call open, chosen and tested | — | Not started |
 | 3.1.2 | Add the dry run for writes | FR-42 | 2.3.4 | Writes become one change set, checked against policy, quotas and invariants, and only that set commits | P1 | Not started |
-| 3.1.3 | Let tier-1 tools run from scripts through the dry run | FR-6; Tier table | 3.1.2, 3.1.10 | Each tier-1 write is logged with its compensation step | P0 | Not started |
+| 3.1.3 | Let tier-1 tools run from scripts through the dry run | FR-6; Tier table | 3.1.2, 3.1.10, G.10 | Each tier-1 write is logged with its compensation step | P0 | Not started |
 | 3.1.4 | Pause tier-2 actions for approval in the owner console | FR-11 | 3.1.1, 3.1.2 | The broker's rendering of the exact call is shown; approve resumes and reject ends; a per-run grant covers one named tool only | P1 | Not started |
 | 3.1.5 | Bind each approval to the exact call | FR-30; FR-46 | 3.1.4 | An approval replayed on a changed call is refused; an approval older than 15 minutes re-runs the checks | P0 | Not started |
 | 3.1.6 | Make paused-run IDs random, bound and expiring | FR-26 | 3.1.4 | A guessed ID, or one reused by another user or project, is refused and never counts as sign-in | P1 | Not started |
@@ -248,9 +248,10 @@ These run alongside the phases, at the cadence the Governance section sets. G.4 
 | G.4 | Write the incident runbook and test it quarterly | Governance: incident response; FR-46; Flag 13 | 1.6.5 | Kill switch, credential revocation, log preservation, client notice and review steps are written before Gate 1 | P0 | Not started |
 | G.5 | Re-run the eval subset and adversarial suite before a new model or provider becomes a default | Governance: model and provider change | 0.2.2, 0.3.3 | Each change has a passing run on record | — | Not started |
 | G.6 | Write the client transparency notice | Governance: client transparency; FR-21 | 1.4.4 | It states what data Code Mode processes, how long it is kept and that scripts are AI-written | P0 | Not started |
-| G.7 | Clear the first-real-client-data gate | Decision: personal data duties; Owner's answer on FR-38 | 0.1.6, 0.1.7, G.6 | All three are done and recorded; until then 1.3.7 refuses any client data class | P0 | Not started |
+| G.7 | Clear the first-real-client-data gate | Decision: personal data duties; Owner's answer on FR-38 | 0.1.6, 0.1.7, G.6, G.10 | All four are done and recorded; until then 1.3.7 refuses any client data class | P0 | Not started |
 | G.8 | Spot-check a small random sample of runs each month (optional) | Risk: over-automation | 1.9.8 | A monthly sample is logged | — | Not started |
 | G.9 | Keep the Formal-profile records, if Formal is chosen at onboarding | Governance profile; FR-52 | 1.6.2 | A written AI policy, roles, objectives and an internal audit plan exist | P0 | Not started |
+| G.10 | Get a paid human security review of the sandbox | Gate 1; Risk: sandbox escape; Flag 8 | 1.9.7 | Review by a security firm or freelancer filed with no open critical findings, before any tier-1 write or real client data; budget from several hundred to a few thousand dollars | — | Not started |
 
 ## Flags
 
@@ -265,8 +266,8 @@ Places where the PRD contradicts itself or leaves work unplaced. The tasks above
 | 5 | FR-28's hash chain conflicts with FR-21's expiry and per-project deletion: deleting rows breaks a simple chain | Chain record hashes and keep tombstones, so a deletion leaves the chain verifiable | 1.4.2, 1.4.4 |
 | 6 | Open questions still lists 12 questions the owner settled on 22 November | Keep only the six still open | 0.1.1 |
 | 7 | The MCP elicitation question looks moot, since the PRD also says approvals never happen inside a CLI | Confirm, then drop the question | 0.1.1 |
-| 8 | Gate 1 needs an independent sandbox review, but no reviewer is named, and there is a single owner | Name a reviewer or an outside service | 1.9.7 (blocked) |
-| 9 | No app is named for the in-app adapter (FR-9), and the eval's code arm needs it too | Record the app in the decisions table | 1.9.1 (blocked) |
+| 8 | Gate 1 needs an independent sandbox review, but no reviewer is named, and there is a single owner | Decided: a second model family reviews for Gate 1, and a paid human review follows before real client data or writes | 1.9.7, G.10 |
+| 9 | No app is named for the in-app adapter (FR-9), and the eval's code arm needs it too | Decided: a small test app in this repo. Record it in the decisions table | 1.9.1, 1.9.2 |
 | 10 | The Build plan places only the functional requirements. The non-functional requirements and Governance controls have no workstream, and backups appear only in the Phase 4 restore test | Place them as this list does, and start daily backups in Phase 1, when the audit log first holds data | 1.4.5, G.1 to G.9 |
 | 11 | FR-44's urgent notifications need the link-only email from Phase 1, which the Build plan does not name | Build it in workstream 1.6 | 1.6.7 |
 | 12 | FR-41's per-session attempt count applies only through the MCP adapter, which arrives in Phase 2 | Build that part in Phase 2 | 2.1.5 |
