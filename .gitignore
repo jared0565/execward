@@ -12,3 +12,6 @@ graph-out/
 node_modules/
 dist/
 .wrangler/
+
+# Raw eval run output; the findings go in docs/
+eval-results/
