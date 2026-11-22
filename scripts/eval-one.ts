@@ -1,5 +1,5 @@
 /**
- * Runs ONE small task on each configured model with real, paid model calls, to
+ * Runs ONE small task on the fixture GitHub tools on each configured model with real, paid model calls, to
  * prove the harness and every route work end to end (task 0.2.2).
  *
  *   npx tsx scripts/eval-one.ts              OpenRouter first, direct on failure
@@ -8,45 +8,31 @@
  * Prints one JSON line per attempt. Exits 1 if a key is missing (before any call)
  * or if any model ends without a successful run.
  */
+import { githubFixtureBackend } from "../src/eval/fixtures/github-backend";
+import { buildWorld } from "../src/eval/fixtures/world";
 import { assertKeysPresent } from "../src/eval/preflight";
 import { anthropicProvider } from "../src/eval/providers/anthropic";
 import { openAIProvider } from "../src/eval/providers/openai";
 import { openRouterProvider } from "../src/eval/providers/openrouter";
 import { runWithFallback } from "../src/eval/routes";
-import type { EvalTask, ModelProvider, ToolBackend } from "../src/eval/types";
+import type { EvalTask, ModelProvider } from "../src/eval/types";
 
 /** US dollars per million tokens, from the providers' price pages on 2026-11-22. */
 const PRICE_PER_MTOK = { input: 0.1, output: 0.5 };
 
-const OPEN_ISSUES: Readonly<Record<string, number>> = { alpha: 17, beta: 25 };
-
-const backend: ToolBackend = {
-  definitions: [
-    {
-      name: "count_open_issues",
-      description: "Returns the number of open issues in one repository.",
-      inputSchema: {
-        type: "object",
-        properties: { repo: { type: "string", description: "Repository name" } },
-        required: ["repo"],
-      },
-    },
-  ],
-  call(name, args) {
-    const repo = (args as { repo?: unknown } | null)?.repo;
-    const count = typeof repo === "string" ? OPEN_ISSUES[repo] : undefined;
-    if (name !== "count_open_issues" || count === undefined) {
-      return Promise.reject(new Error("unknown tool or repository"));
-    }
-    return Promise.resolve({ repo, open_issues: count });
-  },
-};
+const world = buildWorld();
+const backend = githubFixtureBackend(world);
+const repo = world.repos[0];
+if (repo === undefined) throw new Error("the fixture world has no repository");
+const openIssues = repo.issues.filter((issue) => issue.pull === null && issue.state === "open").length;
 
 const task: EvalTask = {
-  id: "smoke-sum-open-issues",
+  id: "smoke-count-open-issues",
   type: "bounded_tool_heavy",
-  prompt: "How many open issues do the repositories alpha and beta have in total?",
-  check: (answer) => /\b42\b/.test(answer),
+  prompt:
+    `How many open issues does the repository ${repo.owner}/${repo.name} have? ` +
+    "Count issues only, not pull requests. Reply with the number.",
+  check: (answer) => new RegExp(`\\b${openIssues}\\b`).test(answer),
 };
 
 interface Target {
