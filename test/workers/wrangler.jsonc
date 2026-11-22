@@ -1,0 +1,9 @@
+// Test-only Worker: runs the executor inside the local Workers runtime (workerd).
+// Never deployed. The production configuration is wrangler.jsonc at the repo root.
+{
+	"name": "execward-executor-harness",
+	"main": "harness.ts",
+	"compatibility_date": "2026-11-13",
+	"send_metrics": false,
+	"worker_loaders": [{ "binding": "LOADER" }]
+}
