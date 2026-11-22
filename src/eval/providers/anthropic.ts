@@ -7,6 +7,7 @@
  * A refusal is recorded as a failed run instead.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { ModelOutputError } from "../types";
 import type { Message, ModelProvider, ModelTurn, ToolCall, TurnRequest } from "../types";
 
 /** The part of the SDK client this adapter uses. Narrow so tests can supply a fake. */
@@ -81,7 +82,7 @@ export function anthropicProvider(options: AnthropicProviderOptions): ModelProvi
       });
 
       if (response.stop_reason === "refusal" || response.stop_reason === "max_tokens") {
-        throw new Error(`model stopped with ${response.stop_reason}`);
+        throw new ModelOutputError(`model stopped with ${response.stop_reason}`);
       }
 
       const toolCalls: ToolCall[] = [];

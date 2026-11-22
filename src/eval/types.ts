@@ -37,6 +37,17 @@ export type Message =
 export interface Usage {
   readonly inputTokens: number;
   readonly outputTokens: number;
+  /** What the route says it charged for the turn, in US dollars, when it says. */
+  readonly reportedCostUsd?: number;
+}
+
+/**
+ * The model's own output ended the run: a refusal, a cut-off, a malformed tool
+ * call. Adapters throw this so the harness can tell it from a failure of the
+ * route (network, credentials, rate limit), which is worth retrying elsewhere.
+ */
+export class ModelOutputError extends Error {
+  override readonly name = "ModelOutputError";
 }
 
 export interface ModelTurn {
@@ -60,6 +71,8 @@ export interface TurnRequest {
 export interface ModelProvider {
   readonly provider: string;
   readonly model: string;
+  /** Reasoning effort asked for. Absent means the model's own default. */
+  readonly effort?: string;
   turn(request: TurnRequest): Promise<ModelTurn>;
 }
 
@@ -82,7 +95,14 @@ export interface EvalTask {
 /** Which way the model reached the tools. */
 export type Arm = "direct" | "tool_search" | "code";
 
-export type FailureCause = "wrong_answer" | "no_answer" | "turn_limit" | "provider_error";
+export type FailureCause =
+  | "wrong_answer"
+  | "no_answer"
+  | "turn_limit"
+  /** The model refused, was cut off or produced an unusable turn. */
+  | "model_stopped"
+  /** The route failed. The model was not measured; another route may be tried. */
+  | "provider_error";
 
 export interface RunRecord {
   readonly taskId: string;
@@ -90,10 +110,14 @@ export interface RunRecord {
   readonly arm: Arm;
   readonly provider: string;
   readonly model: string;
+  /** Reasoning effort asked for, or "default" for the model's own. */
+  readonly effort: string;
   readonly success: boolean;
   readonly failureCause: FailureCause | null;
-  /** Detail for a provider error. Never model output. */
+  /** Detail for a stopped model or a provider error. Never model output. */
   readonly failureDetail: string | null;
+  /** Dollars the route reported for the run; null unless every turn reported one. */
+  readonly reportedCostUsd: number | null;
   readonly turns: number;
   readonly inputTokens: number;
   readonly outputTokens: number;
