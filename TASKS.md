@@ -52,9 +52,9 @@ Exit: a baseline report per model and task type, and the threat model signed off
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 0.3.1 | Build the adversarial cases | FR-31; Threat model | 0.1.10 | Every threat-table row, reviewer injection included, maps to at least one case; fixture secrets are fake patterns that pass the repo's secret scan | P0 | Not started |
-| 0.3.2 | Run the suite in CI against a stub executor | FR-31; Build plan 0.3 | 0.2.1, 0.3.1 | Every case fails as expected against the stub, in CI | P0 | Not started |
-| 0.3.3 | Trigger the suite on every runtime, model or policy change | FR-31; Governance: change control | 0.3.2 | A change to the policy file or runtime pin runs the suite in CI | P0 | Not started |
+| 0.3.1 | Build the adversarial cases | FR-31; Threat model | 0.1.10 | Every threat-table row, reviewer injection included, maps to at least one case; fixture secrets are fake patterns that pass the repo's secret scan. Done 2026-11-22: 40 attack cases and 2 controls in src/adversarial/cases.ts; a test fails if any of the 19 rows has no case; see docs/decisions/0.3-adversarial-suite.md | P0 | Done |
+| 0.3.2 | Run the suite in CI against a stub executor | FR-31; Build plan 0.3 | 0.2.1, 0.3.1 | Every case fails as expected against the stub, in CI. Done 2026-11-22: `npm run adversarial` runs in the required CI job; all 40 attacks are reported open against the defenceless stub and both controls are served | P0 | Done |
+| 0.3.3 | Trigger the suite on every runtime, model or policy change | FR-31; Governance: change control | 0.3.2 | A change to the policy file or runtime pin runs the suite in CI. Done 2026-11-22: the CI workflow has no path filter, so every change runs the suite; a test fails if a filter or condition is added | P0 | Done |
 
 ## Phase 1: MVP
 
