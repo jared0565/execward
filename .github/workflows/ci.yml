@@ -22,3 +22,8 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      # FR-31: the adversarial suite. This workflow has no path filter, so the suite
+      # runs on every change, including any to the policy contract, a runtime or
+      # dependency pin, or the model list. Do not add a path filter to this job.
+      - name: Adversarial suite
+        run: npm run adversarial
