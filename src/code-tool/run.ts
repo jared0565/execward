@@ -64,6 +64,14 @@ function describeIssues(issues: readonly { path: PropertyKey[]; message: string 
     .join("; ");
 }
 
+/** Adds the text of the failing line, so the model sees which condition failed (FR-40). */
+function withCondition(message: string, script: string, line: number | undefined): string {
+  if (line === undefined) return message;
+  const source = script.split("\n")[line - 1]?.trim();
+  if (!source) return message;
+  return `${message}; at line ${line}: ${source.length > 200 ? `${source.slice(0, 200)}...` : source}`;
+}
+
 export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolOutput> {
   const started = deps.now();
   const runId = deps.newRunId();
@@ -71,6 +79,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
   const callsByTool: Record<string, number> = {};
   let scriptHash = EMPTY_SHA256;
 
+  let assertionsPassed = 0;
   const report = (errors: readonly ExecWardError[], assertionFailed = false): RunReport => ({
     runId,
     scriptHash,
@@ -79,8 +88,8 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     recordsWritten: 0,
     errors: [...errors],
     retries: 0,
-    // Passed assertions are not counted yet; task 1.2.6 adds that.
-    assertions: { passed: 0, failed: assertionFailed ? 1 : 0 },
+    // A run ends at its first failed assertion, so `failed` is 0 or 1.
+    assertions: { passed: assertionsPassed, failed: assertionFailed ? 1 : 0 },
     sideEffects: [],
     // No reviewer exists yet (Phase 2), so nothing is claimed.
     verification: "not_applicable",
@@ -111,6 +120,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
       host: countingHost(deps.hostFor({ runId, project: input.data.project }), callsByTool),
     });
     const logs = outcome.logs.length > 0 ? { logs: [...outcome.logs] } : {};
+    assertionsPassed = outcome.assertionsPassed ?? 0;
     if (outcome.status === "completed") {
       output = {
         status: "completed",
@@ -122,7 +132,10 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     } else {
       const error: ExecWardError = {
         code: FAILURE_CODES[outcome.failure.kind],
-        message: outcome.failure.message,
+        message:
+          outcome.failure.kind === "assertion_failed"
+            ? withCondition(outcome.failure.message, input.data.script, outcome.failure.line)
+            : outcome.failure.message,
         ...(outcome.failure.line === undefined ? {} : { line: outcome.failure.line }),
       };
       output = { status: "error", error, ...logs, report: report([error], outcome.failure.kind === "assertion_failed") };

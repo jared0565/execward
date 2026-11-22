@@ -46,7 +46,7 @@ function failure(reply: Reply): { kind: string; message: string; line?: number }
 describe("the Dynamic Worker executor, in the local Workers runtime", { timeout: 30_000 }, () => {
   it("runs a script, forwards its tool calls to the host and returns the final value", async () => {
     const reply = await run(`const a = await tools.test_echo({ n: 1 });\nconst b = await tools.test_echo({ n: 2 });\nreturn [a.args.n, b.args.n];`);
-    expect(reply.outcome).toEqual({ status: "completed", result: [1, 2], logs: [], truncated: false });
+    expect(reply.outcome).toEqual({ status: "completed", result: [1, 2], logs: [], truncated: false, assertionsPassed: 0 });
     expect(reply.calls).toEqual([
       { path: "test_echo", args: { n: 1 } },
       { path: "test_echo", args: { n: 2 } },
@@ -55,7 +55,7 @@ describe("the Dynamic Worker executor, in the local Workers runtime", { timeout:
 
   it("offers search, describe, assert and console", async () => {
     const reply = await run(`const found = await search("echo");\nconst docs = await describe(found[0]);\nassert(docs.description, "no description");\nconsole.log("found", found);\nreturn docs.path;`);
-    expect(reply.outcome).toEqual({ status: "completed", result: "test_echo", logs: ['found ["test_echo"]'], truncated: false });
+    expect(reply.outcome).toEqual({ status: "completed", result: "test_echo", logs: ['found ["test_echo"]'], truncated: false, assertionsPassed: 1 });
     expect(reply.calls.map((call) => call.path)).toEqual(["search", "describe"]);
   });
 
@@ -73,9 +73,33 @@ describe("the Dynamic Worker executor, in the local Workers runtime", { timeout:
     expect(failure(reply)).toEqual({ kind: "script_error", message: "boom", line: 3 });
   });
 
-  it("reports a failed assertion as its own kind", async () => {
-    const reply = await run(`assert(1 === 2, "numbers differ");`);
-    expect(failure(reply)).toMatchObject({ kind: "assertion_failed", message: "numbers differ" });
+  it("reports a failed assertion as its own kind, with the value and the line", async () => {
+    const reply = await run(`const list = [];\nassert(list.length, "the list is empty");`);
+    expect(failure(reply)).toEqual({ kind: "assertion_failed", message: "the list is empty (the condition was 0)", line: 2 });
+  });
+
+  it("counts the assertions that passed", async () => {
+    const reply = await run(`assert(true);\nassert(1, "one");\nreturn "ok";`);
+    expect(reply.outcome).toMatchObject({ status: "completed", result: "ok", assertionsPassed: 2 });
+  });
+
+  it("ends the run at a failed assertion, before the next call", async () => {
+    const reply = await run(`await tools.test_echo({ step: 1 });\nassert(false, "stop here");\nawait tools.test_echo({ step: 2 });`);
+    expect(failure(reply)).toMatchObject({ kind: "assertion_failed", line: 2 });
+    expect(reply.calls).toEqual([{ path: "test_echo", args: { step: 1 } }]);
+  });
+
+  it("does not let a script catch a failed assertion and carry on", async () => {
+    const reply = await run(
+      `assert(true);\ntry { assert(null, "must exist"); } catch {}\n` +
+        `try { await tools.test_echo({ after: true }); } catch {}\ntry { await search("x"); } catch {}\nreturn "carried on";`,
+    );
+    expect(reply.outcome).toMatchObject({
+      status: "failed",
+      failure: { kind: "assertion_failed", message: "must exist (the condition was null)", line: 2 },
+      assertionsPassed: 1,
+    });
+    expect(reply.calls).toEqual([]);
   });
 
   it("leaves the script no globals beyond the allowed set", async () => {
@@ -213,6 +237,23 @@ return pages.map((p) => p.args.page);`,
     const { output } = await codeTool({ script: `const a = await tools.test_echo({});
 throw new TypeError("bad shape");`, project: "demo" });
     expect(output).toMatchObject({ status: "error", error: { code: "script_error", message: "bad shape", line: 2 }, report: { callsByTool: { test_echo: 1 } } });
+  });
+
+  it("reports a failed assertion with the condition's text and counts", async () => {
+    const { output, calls } = await codeTool({
+      script: `const page = await tools.test_echo({ n: 0 });\nassert(page.path, "has a path");\nassert(page.args.n > 0, "n must be positive");\nawait tools.test_echo({ n: 1 });`,
+      project: "demo",
+    });
+    expect(output).toMatchObject({
+      status: "error",
+      error: {
+        code: "assertion_failed",
+        message: 'n must be positive (the condition was false); at line 3: assert(page.args.n > 0, "n must be positive");',
+        line: 3,
+      },
+      report: { assertions: { passed: 1, failed: 1 }, callsByTool: { test_echo: 1 } },
+    });
+    expect(calls.length).toBe(1);
   });
 
   it("returns an oversized final value with the truncation notice", async () => {

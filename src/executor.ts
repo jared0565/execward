@@ -80,11 +80,14 @@ export type ExecutionOutcome =
       readonly logs: readonly string[];
       /** True when `result` was cut to fit `maxResultBytes` (FR-5). */
       readonly truncated: boolean;
+      /** `assert()` calls that passed, when the sandbox counts them (FR-40). */
+      readonly assertionsPassed?: number;
     }
   | {
       readonly status: "failed";
       readonly failure: ExecutionFailure;
       readonly logs: readonly string[];
+      readonly assertionsPassed?: number;
     };
 
 export interface Executor {

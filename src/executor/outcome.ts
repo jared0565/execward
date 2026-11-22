@@ -62,12 +62,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function interpretReport(report: unknown, limits: ExecutionLimits): ExecutionOutcome {
   if (!isRecord(report)) return fault("the sandbox returned no report");
   const logs = capLogs(report.logs, limits.maxResultBytes);
+  const passed =
+    typeof report.assertionsPassed === "number" && Number.isInteger(report.assertionsPassed) && report.assertionsPassed >= 0
+      ? { assertionsPassed: report.assertionsPassed }
+      : {};
 
   if (report.status === "failed") {
     const kind = report.kind === "assertion_failed" ? "assertion_failed" : "script_error";
-    const message = typeof report.message === "string" ? cutToBytes(report.message, 2_000) : "the script failed";
+    let message = typeof report.message === "string" ? cutToBytes(report.message, 2_000) : "the script failed";
+    // FR-40: say what the condition actually was, not only that it was false.
+    if (kind === "assertion_failed" && typeof report.value === "string") {
+      message = `${message} (the condition was ${cutToBytes(report.value, 200)})`;
+    }
     const line = typeof report.line === "number" && Number.isInteger(report.line) && report.line > 0 ? report.line : undefined;
-    return failed(kind, message, logs, line);
+    return { ...failed(kind, message, logs, line), ...passed };
   }
 
   if (report.status !== "completed" || typeof report.resultJson !== "string") {
@@ -76,10 +84,10 @@ export function interpretReport(report: unknown, limits: ExecutionLimits): Execu
 
   if (byteLength(report.resultJson) > limits.maxResultBytes) {
     // FR-5: an oversized final value is cut, and says so. Task 1.2.4 shapes the notice the model sees.
-    return { status: "completed", result: cutToBytes(report.resultJson, limits.maxResultBytes), logs, truncated: true };
+    return { status: "completed", result: cutToBytes(report.resultJson, limits.maxResultBytes), logs, truncated: true, ...passed };
   }
   try {
-    return { status: "completed", result: JSON.parse(report.resultJson) as unknown, logs, truncated: false };
+    return { status: "completed", result: JSON.parse(report.resultJson) as unknown, logs, truncated: false, ...passed };
   } catch {
     return fault("the sandbox returned a result that is not JSON", logs);
   }
