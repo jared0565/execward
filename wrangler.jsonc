@@ -1,0 +1,29 @@
+// ExecWard's core Worker (task 1.1.1).
+//
+// Every key in this file is checked against an allowlist in
+// src/worker/config-check.ts. A key that is not listed there fails the tests,
+// and so fails CI: that is how a new binding, variable or environment is
+// stopped from arriving unnoticed (FR-24). To add one, change this file and
+// the allowlist in the same pull request, and say why.
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "execward",
+	"main": "src/worker.ts",
+	// Pinned (FR-23). Must equal COMPATIBILITY_DATE in src/worker/bindings.ts.
+	"compatibility_date": "2026-11-13",
+	"compatibility_flags": [],
+	// Not reachable from the internet until sign-in exists (Phase 2).
+	"workers_dev": false,
+	"preview_urls": false,
+	"send_metrics": false,
+	"upload_source_maps": true,
+	"observability": {
+		"enabled": true
+	},
+	// The only binding: the Worker Loader that runs a script in a Dynamic Worker.
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
+		}
+	]
+}
