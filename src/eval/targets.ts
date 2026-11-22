@@ -18,11 +18,14 @@ export interface Target {
 /** Every key a run may need. All are required up front, so a fallback cannot fail on a missing key. */
 export const REQUIRED_KEYS = ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"] as const;
 
+/** The models measured, by name. Known without building a client or reading a key. */
+export const BASELINE_TARGET_NAMES = ["Claude Haiku 5.5", "GPT-6 Luna"] as const;
+
 /** Builds the targets. Call only after the keys are known to be present. */
 export function baselineTargets(): Target[] {
   return [
     {
-      name: "Claude Haiku 5.5",
+      name: BASELINE_TARGET_NAMES[0],
       pricePerMTok: { input: 0.1, output: 0.5 },
       routes: [
         openRouterProvider({ model: "anthropic/claude-haiku-5.5", upstream: "anthropic" }),
@@ -30,7 +33,7 @@ export function baselineTargets(): Target[] {
       ],
     },
     {
-      name: "GPT-6 Luna",
+      name: BASELINE_TARGET_NAMES[1],
       pricePerMTok: { input: 0.1, output: 0.5 },
       routes: [
         openRouterProvider({ model: "openai/gpt-6-luna", upstream: "openai" }),
