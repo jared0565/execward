@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint .",
-    "adversarial": "tsx scripts/adversarial.ts"
+    "adversarial": "tsx scripts/adversarial.ts",
+    "sbom": "npm sbom --sbom-format cyclonedx --sbom-type application > sbom.cdx.json",
+    "check:supply-chain": "tsx scripts/check-supply-chain.ts"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "1.12.0",

@@ -15,3 +15,4 @@ dist/
 
 # Raw eval run output; the findings go in docs/
 eval-results/
+sbom.cdx.json
