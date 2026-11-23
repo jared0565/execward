@@ -61,9 +61,23 @@ export const ALLOWED_SETTINGS = {
   upload_source_maps: true,
 } as const;
 
+/**
+ * Every secret the Worker may hold. Neither is a credential for anything: they say
+ * who the owner is, so that the console can refuse everyone else (task 1.6.1).
+ * A secret not named here fails the deployed check.
+ */
+export const ALLOWED_SECRETS: readonly string[] = [
+  /** The audience tag of the Cloudflare Access application that guards the console. */
+  "ACCESS_AUD",
+  /** The owner's sign-in address. A secret so that it is in no file and no log. */
+  "OWNER_EMAIL",
+];
+
 /** The Worker's environment as the platform supplies it. Typed fully in task 1.2. */
 export interface Env {
   readonly LOADER: unknown;
   readonly DB: unknown;
   readonly BACKUPS: unknown;
+  readonly ACCESS_AUD?: string;
+  readonly OWNER_EMAIL?: string;
 }

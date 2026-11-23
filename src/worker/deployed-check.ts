@@ -7,7 +7,7 @@
  * Cloudflare dashboard. This does: it reads the bindings of the version that
  * is live, as the platform reports them.
  */
-import { ALLOWED_BINDINGS, COMPATIBILITY_DATE, type AllowedBinding } from "./bindings";
+import { ALLOWED_BINDINGS, ALLOWED_SECRETS, COMPATIBILITY_DATE, type AllowedBinding } from "./bindings";
 
 /** One binding of a deployed version, as `wrangler versions view --json` reports it. */
 export interface DeployedBinding {
@@ -31,7 +31,7 @@ const PLATFORM: Readonly<Record<string, { readonly type: string; readonly target
 };
 
 /** Problems, in plain words. Empty means the deployed Worker reaches what the allowlist names and nothing else. */
-export function deployedProblems(version: DeployedVersion, allowed: readonly AllowedBinding[] = ALLOWED_BINDINGS): string[] {
+export function deployedProblems(version: DeployedVersion, allowed: readonly AllowedBinding[] = ALLOWED_BINDINGS, allowedSecrets: readonly string[] = ALLOWED_SECRETS): string[] {
   const problems: string[] = [];
   const expected = allowed.map((entry) => {
     const platform = PLATFORM[entry.section];
@@ -40,6 +40,8 @@ export function deployedProblems(version: DeployedVersion, allowed: readonly All
   });
 
   for (const binding of version.bindings) {
+    // The platform may list a secret among the bindings. An allowed one is not a problem; any other falls through.
+    if (binding.type === "secret_text" && allowedSecrets.includes(binding.name)) continue;
     const match = expected.find((entry) => entry.name === binding.name);
     if (!match) {
       problems.push(`the deployed Worker has a binding "${binding.name}" (${binding.type}) that is not on the allowlist`);
@@ -52,8 +54,10 @@ export function deployedProblems(version: DeployedVersion, allowed: readonly All
     const count = version.bindings.filter((binding) => binding.name === entry.name).length;
     if (count !== 1) problems.push(`the binding "${entry.name}" should be deployed once, found ${count}`);
   }
-  // No secret is allowed yet. A secret is a credential the Worker could use, whatever the code says.
-  for (const secret of version.secrets) problems.push(`the deployed Worker holds a secret named "${secret}" that is not on the allowlist`);
+  // A secret is something the Worker could use, whatever the code says. Only the named ones may exist.
+  for (const secret of version.secrets) {
+    if (!allowedSecrets.includes(secret)) problems.push(`the deployed Worker holds a secret named "${secret}" that is not on the allowlist`);
+  }
   if (version.compatibilityDate !== COMPATIBILITY_DATE) problems.push(`the deployed compatibility date is ${JSON.stringify(version.compatibilityDate)}, not ${COMPATIBILITY_DATE}`);
   return problems;
 }
