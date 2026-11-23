@@ -1,0 +1,34 @@
+name: Sandbox on Cloudflare
+
+# Task 1.2.8: the escape, limit and blocked-construct cases against the test Worker on
+# Cloudflare, where isolation and limits are real. It tests the test Worker as last
+# deployed (npm run deploy:test-worker), not this commit's code: CI holds no Cloudflare
+# credential and cannot deploy.
+#
+# Kept apart from ci.yml, which must have no conditions. This one needs one: pull
+# requests from forks get no secrets, so they skip it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  deployed:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Sandbox cases on Cloudflare
+        run: npm run test:deployed
+        env:
+          EXECWARD_TEST_URL: ${{ secrets.EXECWARD_TEST_URL }}
+          EXECWARD_TEST_SECRET: ${{ secrets.EXECWARD_TEST_SECRET }}
