@@ -123,31 +123,52 @@ export class Code extends WorkerEntrypoint {
     const console = Object.freeze({
       log: (...values) => { logs.push(values.map(format).join(" ")); },
     });
+    // The first failed assertion. Once set the run is over: no further call
+    // leaves the sandbox, even if the script catches the error and carries on (FR-40).
+    let failedAssertion;
+    let assertionsPassed = 0;
+    const open = () => { if (failedAssertion) throw failedAssertion.error; };
     const tools = new Proxy(Object.freeze({}), {
-      get: (_target, path) => (typeof path === "string" ? (args) => host.callTool(path, args) : undefined),
+      get: (_target, path) => (typeof path === "string" ? (args) => { open(); return host.callTool(path, args); } : undefined),
     });
-    const search = (query) => host.search(query);
-    const describe = (path) => host.describe(path);
+    const search = (query) => { open(); return host.search(query); };
+    const describe = (path) => { open(); return host.describe(path); };
     const assert = (condition, message) => {
-      if (!condition) throw new AssertionFailure(message === undefined ? "assertion failed" : String(message));
+      if (condition) { assertionsPassed++; return; }
+      const error = new AssertionFailure(message === undefined ? "assertion failed" : String(message));
+      if (!failedAssertion) failedAssertion = { error, value: format(condition).slice(0, 200) };
+      throw error;
     };
+    const assertionReport = () => ({
+      status: "failed",
+      kind: "assertion_failed",
+      message: String(failedAssertion.error.message),
+      value: failedAssertion.value,
+      line: lineOf(failedAssertion.error),
+      assertionsPassed,
+      logs,
+      globalsLeft,
+    });
     const globalsLeft = stripGlobals();
     try {
       const value = await script(tools, search, describe, assert, console);
+      // A script that caught its own failed assertion still failed it.
+      if (failedAssertion) return assertionReport();
       let resultJson;
       try {
         resultJson = JSON.stringify(value === undefined ? null : value);
       } catch (error) {
-        return { status: "failed", kind: "script_error", message: "the final value cannot be written as JSON: " + String(error && error.message), logs, globalsLeft };
+        return { status: "failed", kind: "script_error", message: "the final value cannot be written as JSON: " + String(error && error.message), assertionsPassed, logs, globalsLeft };
       }
-      return { status: "completed", resultJson: resultJson === undefined ? "null" : resultJson, logs, globalsLeft };
+      return { status: "completed", resultJson: resultJson === undefined ? "null" : resultJson, assertionsPassed, logs, globalsLeft };
     } catch (error) {
-      const assertion = error instanceof AssertionFailure;
+      if (failedAssertion) return assertionReport();
       return {
         status: "failed",
-        kind: assertion ? "assertion_failed" : "script_error",
+        kind: "script_error",
         message: String((error && error.message) || error),
         line: lineOf(error),
+        assertionsPassed,
         logs,
         globalsLeft,
       };
