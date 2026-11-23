@@ -9,5 +9,7 @@
 	// A local database only. The id is a placeholder; nothing here is ever deployed.
 	"d1_databases": [
 		{ "binding": "DB", "database_name": "execward-test", "database_id": "00000000-0000-0000-0000-000000000000" }
-	]
+	],
+	// A local bucket only, for the backup tests.
+	"r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "execward-test-backups" }]
 }

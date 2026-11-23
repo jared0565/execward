@@ -231,3 +231,64 @@ describe("database-backed stores, on a local D1 database", { timeout: 30_000 }, 
     });
   });
 });
+
+describe("backup to a bucket and restore (task 1.4.5)", { timeout: 120_000 }, () => {
+  const NOW = Date.UTC(2027, 0, 15, 12);
+  interface BackupReply {
+    readonly taken: { key: string; rows: Record<string, number>; bytes: number; sha256: string; pruned: number };
+    readonly keys: string[];
+    readonly restored: { rows: Record<string, number> } | { error: string };
+    readonly sameAuditLog: boolean;
+    readonly chain: { ok: boolean };
+    readonly control: unknown;
+    readonly policyPaths: string[];
+    readonly project: unknown;
+    readonly escalations: number;
+  }
+  async function backup(body: Record<string, unknown> = {}): Promise<BackupReply> {
+    const response = await worker.fetch("http://harness.invalid/backup", { method: "POST", body: JSON.stringify({ now: NOW, ...body }) });
+    return (await response.json()) as BackupReply;
+  }
+
+  it("backs up every table, and a restore into an empty database gives the same content back", async () => {
+    const reply = await backup();
+    expect(reply.taken.key).toBe("backups/2027-01-15.json");
+    expect(reply.taken.rows).toMatchObject({ policy: 3, audit_log: 5, escalations: 1, control_state: 1, projects: 1 });
+    expect(reply.taken.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(reply.keys).toEqual(["backups/2027-01-15.json"]);
+    expect(reply.restored).toEqual({ rows: reply.taken.rows });
+    // The audit log comes back entry for entry, and its hash chain still verifies.
+    expect(reply.sameAuditLog).toBe(true);
+    expect(reply.chain).toMatchObject({ ok: true });
+    expect(reply.control).toMatchObject({ codeMode: true, pausedProjects: ["paused-one"], version: 1 });
+    expect(reply.policyPaths.length).toBe(3);
+    expect(reply.project).toEqual({ project: "work", dataClass: "internal" });
+    expect(reply.escalations).toBe(1);
+  });
+
+  it("backs up a table larger than one page of rows", async () => {
+    const reply = await backup({ auditEvents: 1_100 });
+    expect(reply.taken.rows.audit_log).toBe(1_100);
+    expect(reply.restored).toEqual({ rows: reply.taken.rows });
+    expect(reply.sameAuditLog).toBe(true);
+    expect(reply.chain).toMatchObject({ ok: true });
+  });
+
+  it("deletes backups older than seven days, and nothing else", async () => {
+    const reply = await backup({ olderObjects: ["backups/2027-01-01.json", "backups/2027-01-08.json", "backups/2027-01-09.json", "backups/2027-01-14.json", "backups/notes.txt", "backups/2020-01-01.json.bak"] });
+    expect(reply.taken.pruned).toBe(2);
+    expect(reply.keys).toEqual(["backups/2020-01-01.json.bak", "backups/2027-01-09.json", "backups/2027-01-14.json", "backups/2027-01-15.json", "backups/notes.txt"]);
+  });
+
+  it("refuses to restore a backup that was changed after it was written, and writes nothing", async () => {
+    const reply = await backup({ tamperBackup: true });
+    expect(reply.restored).toEqual({ error: "BackupError: the backup does not match its recorded hash" });
+    expect(reply.escalations).toBe(0);
+    expect(reply.policyPaths).toEqual([]);
+  });
+
+  it("refuses a backup that is not there, and refuses to restore over rows that exist", async () => {
+    expect((await backup({ restoreKey: "backups/1999-01-01.json" })).restored).toEqual({ error: 'BackupError: there is no backup named "backups/1999-01-01.json"' });
+    expect((await backup({ restoreTwice: true })).restored).toEqual({ error: 'BackupError: the table "policy" is not empty' });
+  });
+});

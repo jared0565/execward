@@ -91,7 +91,8 @@ Add an adversarial test for the way in, so the same route fails the suite from n
 
 - No console pages exist, so step 1's first row cannot be done by clicking.
 - No export tool for the audit log exists. Step 3.2 means a database query for now.
-- No backup exists (task 1.4.5), so there is no second copy to compare against.
+- Backup and restore are built and tested (task 1.4.5), but no daily schedule runs yet,
+  so there is still no second copy of production to compare against.
 - No alerting exists (task 3.1.10). An incident is found by reading the queue or by
   being told.
 - The contact details of the owner, the providers and the ICO are not written here. The

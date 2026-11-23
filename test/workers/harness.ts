@@ -11,6 +11,7 @@ import auditMigration from "../../migrations/0002_audit_log.sql";
 import stateMigration from "../../migrations/0003_state.sql";
 import { d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, putProjectRecord, sweepQuotaCounters, type StateDatabase } from "../../src/storage/d1-stores";
 import { applyRetention, auditLog, d1AuditStore, deleteProjectLogs, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
+import { BACKUP_TABLES, backUp, restore, type BackupBucket, type BackupDatabase } from "../../src/backup";
 import { brokerHost } from "../../src/broker/broker";
 import { d1PolicyStore, memoryPolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
 import { githubPinsAndPolicy, githubUpstream } from "../../src/connectors/github";
@@ -47,6 +48,16 @@ interface PolicyBody {
   readonly input?: unknown;
   readonly inputSchema?: unknown;
   readonly allowedDataClass?: DataClass;
+}
+
+interface BackupBody {
+  readonly now?: number;
+  readonly auditEvents?: number;
+  /** Objects put in the bucket before the backup, to see which are deleted. */
+  readonly olderObjects?: readonly string[];
+  readonly tamperBackup?: boolean;
+  readonly restoreKey?: string;
+  readonly restoreTwice?: boolean;
 }
 
 interface GithubBody {
@@ -88,9 +99,72 @@ function scriptedHost(calls: { path: string; args: unknown }[]): RunHost {
 }
 
 export default {
-  async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like; GITHUB_TOKEN?: string }): Promise<Response> {
+  async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like; GITHUB_TOKEN?: string; BACKUPS?: BackupBucket }): Promise<Response> {
     const calls: { path: string; args: unknown }[] = [];
     const route = new URL(request.url).pathname;
+    if (route === "/backup") {
+      // Task 1.4.5: fill a database, back it up to the bucket, empty the database, restore, and compare.
+      const body = (await request.json()) as BackupBody;
+      const bucket = env.BACKUPS;
+      if (!bucket) return Response.json({ error: "no bucket" }, { status: 500 });
+      const db = env.DB as unknown as BackupDatabase & AuditDatabase & StateDatabase;
+      const now = body.now ?? Date.now();
+      const freshTables = async (): Promise<void> => {
+        for (const name of ["audit_log_no_update", "audit_log_no_delete"]) await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).bind().run();
+        for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
+        await db.prepare(migration).bind().run();
+        for (const statement of auditMigration.split(/;\s*\n(?=CREATE)/)) await db.prepare(statement).bind().run();
+        const state = stateMigration
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))
+          .join("\n");
+        for (const statement of state.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
+      };
+      // An empty bucket prefix and empty tables for every request.
+      for (let page = await bucket.list({ prefix: "backups/" }); ; page = await bucket.list({ prefix: "backups/", ...(page.cursor === undefined ? {} : { cursor: page.cursor }) })) {
+        if (page.objects.length > 0) await bucket.delete(page.objects.map((object) => object.key));
+        if (!page.truncated) break;
+      }
+      await freshTables();
+
+      // Something in every table.
+      const { records } = await githubPinsAndPolicy();
+      for (const record of records.slice(0, 3)) await putPolicyRecord(env.DB, record);
+      const auditStore = d1AuditStore(db);
+      const log = auditLog(auditStore, () => now);
+      for (let n = 0; n < (body.auditEvents ?? 5); n++) await log.record({ kind: "test", runId: `run-${n}`, project: "work", body: { text: `entry ${n}`, quote: 'a "quoted" line\nand another' } });
+      await d1ControlStore(db).write({ codeMode: true, killed: false, pausedProjects: ["paused-one"], blockedTools: [], version: 1 }, 0);
+      await putProjectRecord(db, { project: "work", dataClass: "internal" });
+      await db.prepare("INSERT INTO escalations (id, status, created_at, item) VALUES (?1, ?2, ?3, ?4)").bind("item-1", "open", now, JSON.stringify({ id: "item-1" })).run();
+      for (const key of body.olderObjects ?? []) await bucket.put(key, "{}", { customMetadata: { sha256: "0" } });
+
+      const before = { entries: await auditStore.all(), anchor: (await auditStore.anchor()) ?? null };
+      const taken = await backUp(db, bucket, now);
+      const keys = (await bucket.list({ prefix: "" })).objects.map((object) => object.key).sort();
+      if (body.tamperBackup) await bucket.put(taken.key, (await (await bucket.get(taken.key))!.text()).replace("entry 1", "entry X"), { customMetadata: { sha256: taken.sha256 } });
+
+      // The scratch database: the same one, emptied.
+      await freshTables();
+      let restored: unknown;
+      try {
+        if (body.restoreTwice) await restore(db, bucket, taken.key);
+        restored = { rows: await restore(db, bucket, body.restoreKey ?? taken.key) };
+      } catch (error) {
+        restored = { error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
+      }
+      const after = { entries: await d1AuditStore(db).all(), anchor: (await d1AuditStore(db).anchor()) ?? null };
+      return Response.json({
+        taken,
+        keys,
+        restored,
+        sameAuditLog: JSON.stringify(before) === JSON.stringify(after),
+        chain: await verifyChain(after.entries, after.anchor ?? undefined),
+        control: await d1ControlStore(db).read().catch((error: Error) => `error: ${error.message}`),
+        policyPaths: (await d1PolicyStore(env.DB).list()).map((record) => `${record.server}_${record.tool}`).sort(),
+        project: (await d1ProjectStore(db).get("work")) ?? null,
+        escalations: (await db.prepare("SELECT id FROM escalations").bind().all<{ id: string }>()).results.length,
+      });
+    }
     if (route === "/github") {
       // The GitHub connector behind the whole stack: code tool, sandbox, broker, pinned
       // definitions and policy. The credential is this Worker's secret GITHUB_TOKEN; when it

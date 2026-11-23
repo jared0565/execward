@@ -20,5 +20,7 @@
 	// A database for the tests only. Tests drop and recreate its tables.
 	"d1_databases": [
 		{ "binding": "DB", "database_name": "execward-test", "database_id": "e0ec5608-b235-4059-816a-230d1be84317" }
-	]
+	],
+	// A bucket for the backup tests only. Each test empties its "backups/" folder.
+	"r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "execward-test-backups" }]
 }
