@@ -14,7 +14,9 @@
     "adversarial": "tsx scripts/adversarial.ts",
     "sbom": "npm sbom --sbom-format cyclonedx --sbom-type application > sbom.cdx.json",
     "check:supply-chain": "tsx scripts/check-supply-chain.ts",
-    "build:worker": "wrangler deploy --dry-run --outdir .wrangler/dry-run"
+    "build:worker": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "deploy:test-worker": "wrangler deploy -c test/workers/wrangler.deployed.jsonc",
+    "test:deployed": "vitest run --config vitest.deployed.config.ts"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "1.12.0",

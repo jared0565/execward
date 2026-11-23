@@ -126,6 +126,17 @@ export function dynamicWorkerExecutor(loader: WorkerLoader): Executor {
         if (bridge.quotaExceeded) {
           return failed("quota_exceeded", `the run made more than ${request.limits.maxHostCalls} calls`);
         }
+        // The platform ends an isolate that goes over its CPU or memory limit by failing the call,
+        // with these messages (seen on a deployed Worker, 2026-11-23). Those are the limits working,
+        // not a fault. A script cannot produce them: an error it throws is caught inside the sandbox
+        // and comes back in the report.
+        const platform = error instanceof Error ? error.message : "";
+        if (/exceeded CPU time limit/i.test(platform)) {
+          return failed("timeout", `the run used more than its ${request.limits.cpuMs} ms of CPU time`);
+        }
+        if (/exceeded memory limit/i.test(platform)) {
+          return failed("quota_exceeded", "the run used more memory than the sandbox allows");
+        }
         // Rule 3 of the executor interface: on any fault, report it. Never run the script another way.
         return fault(`the sandbox failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
