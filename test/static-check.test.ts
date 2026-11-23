@@ -4,7 +4,8 @@ import type { ScriptRun, Target } from "../src/adversarial";
 import { fakeToken } from "../src/adversarial/fixtures";
 import { errorSchema } from "../src/contracts/errors";
 import { SCRIPT_LIMITS } from "../src/limits";
-import { checkScript } from "../src/static-check/check";
+import { LANGUAGE_BUILTINS, SANDBOX_GLOBALS } from "../src/contracts/sandbox-api";
+import { checkScript, REACH_GLOBALS } from "../src/static-check/check";
 
 async function rules(script: string): Promise<string[]> {
   const result = await checkScript(script);
@@ -57,6 +58,51 @@ describe("blocked constructs (FR-33)", () => {
   });
 });
 
+describe("a name that exists nowhere is refused as an error the model may fix (FR-41)", () => {
+  const ALLOWED = new Set<string>([...SANDBOX_GLOBALS, ...LANGUAGE_BUILTINS]);
+  it("refuses a misspelt or undeclared name before the script runs, as script_error", async () => {
+    const result = await checkScript(["const issues = await tools.github_list_issues({});", "return isues.length;"].join(String.fromCharCode(10)));
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "script_error", message: '"isues" is not defined; a script can use only the Sandbox API and names it declares itself', line: 2 },
+      problems: [{ rule: "unknown_name", line: 2 }],
+    });
+  });
+
+  it("treats a harmless built-in that is not on the list the same way", async () => {
+    for (const name of ["URL", "TextEncoder", "atob", "performance", "isues", "resutl"].filter((name) => !ALLOWED.has(name))) {
+      const result = await checkScript(`return ${name};`);
+      expect(result.ok, name).toBe(false);
+      if (!result.ok) expect(result.error.code, name).toBe("script_error");
+    }
+  });
+
+  it("stays a security failure when a reaching name appears beside the typo", async () => {
+    const result = await checkScript("return isues + fetch('https://example.com');");
+    expect(result).toMatchObject({ ok: false, error: { code: "static_check_failed" } });
+    if (!result.ok) expect(result.problems.map((problem) => problem.rule).sort()).toEqual(["undeclared_global", "unknown_name"]);
+  });
+
+  it("stays a security failure for every name that reaches outside, and for every blocked construct", async () => {
+    for (const name of REACH_GLOBALS) {
+      const result = await checkScript(`return typeof ${name};`);
+      expect(result.ok, name).toBe(false);
+      if (!result.ok) expect(result.error.code, name).toBe("static_check_failed");
+    }
+    for (const script of ["return eval('1');", "return new Function('return 1')();", "return WebAssembly;", "return (0).constructor;", "tools = 1;"]) {
+      const result = await checkScript(script);
+      if (!result.ok) expect(result.error.code, script).toBe("static_check_failed");
+      expect(result.ok, script).toBe(false);
+    }
+  });
+
+  it("does not repeat a very long made-up name in full", async () => {
+    const result = await checkScript(`return ${"x".repeat(500)};`);
+    if (!result.ok) expect(result.error.message.length).toBeLessThan(200);
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe("globals outside the Sandbox API (FR-33)", () => {
   it.each(["fetch", "process", "globalThis", "self", "require", "setTimeout", "Reflect", "Proxy", "XMLHttpRequest", "WebSocket", "caches", "navigator", "crypto", "arguments"])(
     "refuses %s",
@@ -76,7 +122,7 @@ describe("globals outside the Sandbox API (FR-33)", () => {
   });
 
   it("refuses an assignment that would create a global", async () => {
-    expect(await rules(`leaked = 1;`)).toEqual(["undeclared_global"]);
+    expect(await rules(`leaked = 1;`)).toEqual(["unknown_name"]);
   });
 
   it("reports the line", async () => {
