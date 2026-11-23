@@ -24,8 +24,11 @@ function connector(reply: (url: string) => Response | Promise<Response> = () => 
   return { sent, upstream };
 }
 
+// Built once: approving fifteen definitions for every lookup made one test slow enough to time out.
+const approved = githubPinsAndPolicy();
+
 async function recordFor(tool: string): Promise<PolicyRecord> {
-  const { records } = await githubPinsAndPolicy();
+  const { records } = await approved;
   const record = records.find((item) => item.tool === tool);
   if (!record) throw new Error(`no record for ${tool}`);
   return record;

@@ -87,11 +87,16 @@ describe("the GitHub connector on Cloudflare", { timeout: 60_000 }, () => {
 
   it.skipIf(!configured)("gives a script nowhere to find the credential", async () => {
     const { output, credentialInReply } = await run(
-      `const seen = [];\nfor (const name of Object.getOwnPropertyNames(globalThis)) { try { seen.push(name + ":" + String(globalThis[name]).slice(0, 80)); } catch {} }\n` +
-        `let viaError = "";\ntry { await tools.github_get_repository({ owner: "no-such-owner-execward", repo: "nothing" }); } catch (error) { viaError = String(error); }\n` +
+      // Everything a script can get hold of: what the tools object is, the docs, a search, and GitHub's own error text.
+      `const seen = [];\nfor (const look of [() => JSON.stringify(Object.keys(tools)), () => String(tools.github_get_repository)]) { try { seen.push(look()); } catch (error) { seen.push(String(error)); } }\n` +
+        `seen.push(JSON.stringify(await describe("github_get_repository")), JSON.stringify(await search("repository")));\n` +
+        `let viaError = "";\ntry { await tools.github_get_repository({ owner: "no-such-owner-execward", repo: "nothing" }); } catch (error) { viaError = String(error) + String(error.stack ?? ""); }\n` +
         `return { seen, viaError };`,
     );
+    expect(output.error).toBeUndefined();
     expect(output.status).toBe("completed");
+    expect(String((output.result as { viaError: string }).viaError)).toContain("GitHub answered 404");
+    expect(JSON.stringify(output)).not.toMatch(/Bearer|authorization/i);
     expect(credentialInReply).toBe(false);
   });
 
