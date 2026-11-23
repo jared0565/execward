@@ -38,6 +38,14 @@ export class UpstreamToolError extends Error {
   override readonly name = "UpstreamToolError";
 }
 
+/** Something unusual the broker let through but noted for the audit log (FR-29). */
+export interface BrokerFlag {
+  readonly path: string;
+  readonly kind: "large_argument";
+  /** Size of the arguments as JSON. */
+  readonly bytes: number;
+}
+
 /** One result the broker accepted and handed to the script, with its tags (FR-35). */
 export interface TaggedRead {
   readonly path: string;
@@ -64,6 +72,8 @@ export interface BrokerHost extends SandboxHost {
   readonly denials: readonly BrokerDenial[];
   /** Every result handed to the script in this run, in order, with its tags (FR-35). */
   readonly reads: readonly TaggedRead[];
+  /** Calls that went out but were noted as unusual (FR-29). */
+  readonly flags: readonly BrokerFlag[];
   /**
    * The highest data class the script has been given in this run, or
    * `undefined` when it has read nothing. Whatever the script returns or sends
@@ -84,7 +94,33 @@ export interface BrokerDeps {
 export function brokerHost(deps: BrokerDeps): BrokerHost {
   const denials: BrokerDenial[] = [];
   const reads: TaggedRead[] = [];
+  const flags: BrokerFlag[] = [];
   let ended: ExecWardError | undefined;
+
+  /**
+   * The data-flow rule (FR-29). An outbound tool can send data out of the
+   * project, so two things stop a call to one:
+   *   - the run has already read something sensitive, unless the owner has
+   *     listed destinations for this tool and the call names only those;
+   *   - the arguments are unusually large, which is what carrying data out
+   *     looks like.
+   * Unusually large arguments to any other tool are let through and flagged.
+   */
+  function checkDataFlow(path: string, record: PolicyRecord, args: unknown, destinations: number): void {
+    const bytes = new TextEncoder().encode(JSON.stringify(args) ?? "").length;
+    const large = bytes > CALL_LIMITS.largeArgumentBytes;
+    if (record.outbound) {
+      if (large) deny(path, `the arguments to an outbound tool are unusually large (${bytes} bytes)`);
+      const sensitive = reads.find((read) => read.sensitive);
+      // An empty destination list approves nothing, so by default every such call stops here.
+      const approved = record.destinationAllowlist.length > 0 && destinations > 0;
+      if (sensitive && !approved) {
+        deny(path, `the run has read sensitive data from "${sensitive.path}", and this tool can send data out`);
+      }
+    } else if (large) {
+      flags.push({ path, kind: "large_argument", bytes });
+    }
+  }
 
   /** Checks one result and records its tags. Returns the copy the script is given. */
   function accept(path: string, record: PolicyRecord, definition: ToolDefinition, result: unknown): unknown {
@@ -135,6 +171,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
   return {
     denials,
     reads,
+    flags,
     securityError: () => ended,
     dataClass: () =>
       reads.length === 0 ? undefined : DATA_CLASSES[Math.max(...reads.map((read) => DATA_CLASSES.indexOf(read.dataClass)))],
@@ -167,6 +204,8 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         // Reaching outside the allowlist is a security refusal. The value itself is not repeated.
         if (!allowed) deny(path, `the ${found.kind === "url" ? "URL" : "path"} in "${found.at}" is not on the tool's allowlist`);
       }
+      // Every URL found above is already on the tool's list; this counts them.
+      checkDataFlow(path, record, args, checked.located.filter((found) => found.kind === "url").length);
 
       let result: unknown;
       try {
