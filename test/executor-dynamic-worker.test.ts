@@ -476,3 +476,32 @@ describe("the audit log on a local D1 database", { timeout: 30_000 }, () => {
     expect(reply.chain).toMatchObject({ ok: false, seq: 2 });
   });
 });
+
+describe("names on the tools object that cannot be a tool", { timeout: 30_000 }, () => {
+  it("makes no call when a script prints, serialises, awaits or returns the tools object", async () => {
+    const reply = await run(
+      `const out = [];\n` +
+        `for (const look of [() => String(tools), () => JSON.stringify(tools), () => typeof tools.then, () => typeof tools.toString, () => typeof tools.toJSON, () => typeof tools.constructor, () => typeof tools.__proto__, () => typeof tools._test_echo, () => typeof tools.test_echo_, () => typeof tools["1test_echo"], () => typeof tools["test-echo"], () => typeof tools.test]) {\n` +
+        `  try { out.push(look()); } catch (error) { out.push("threw"); }\n}\n` +
+        `const awaited = await tools;\n` +
+        `return { out, same: awaited === tools };`,
+    );
+    expect(reply.outcome).toMatchObject({
+      status: "completed",
+      result: { out: ["threw", "{}", "undefined", "undefined", "undefined", "undefined", "undefined", "undefined", "undefined", "undefined", "undefined", "undefined"], same: true },
+    });
+    expect(reply.calls).toEqual([]);
+  });
+
+  it("reports calling such a name as the script's own error, with its line", async () => {
+    const reply = await run(`const x = 1;\nreturn await tools.listIssues({});`);
+    expect(failure(reply)).toMatchObject({ kind: "script_error", line: 2 });
+    expect(reply.calls).toEqual([]);
+  });
+
+  it("still forwards a name of the right shape, approved or not, for the broker to judge", async () => {
+    const reply = await run(`return [typeof tools.test_echo, (await tools.not_an_approved_tool({ a: 1 })).path, (await tools.Server2_get_Item({})).path];`);
+    expect(reply.outcome).toMatchObject({ status: "completed", result: ["function", "not_an_approved_tool", "Server2_get_Item"] });
+    expect(reply.calls.map((call) => call.path)).toEqual(["not_an_approved_tool", "Server2_get_Item"]);
+  });
+});
