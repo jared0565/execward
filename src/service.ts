@@ -13,6 +13,7 @@ import { exposureFor, type Exposure, type Gate, type ProjectStore, CLIENT_DATA_G
 import type { PolicyStore } from "./broker/policy-store";
 import { admitRun, releaseRun, type QuotaStore } from "./broker/quotas";
 import type { AttemptGate } from "./code-tool/attempts";
+import { callGate, runGate, type ControlStore } from "./console/control";
 import type { MeterFactory } from "./meter/meter";
 import { runCodeTool } from "./code-tool/run";
 import type { CodeToolOutput } from "./contracts/code-tool";
@@ -31,6 +32,8 @@ export interface CodeToolServiceDeps {
   readonly docsFor: (path: string) => Promise<{ readonly typing: string } | undefined>;
   /** Token metering. Required, so that "off" is a choice someone made and not an omission. */
   readonly meter: MeterFactory;
+  /** The owner's switches: Code Mode, the kill switch, paused projects, blocked tools. */
+  readonly control: ControlStore;
   readonly now: () => number;
   readonly newRunId: () => string;
   /** Only tests pass this. Production uses `CLIENT_DATA_GATE`. */
@@ -75,6 +78,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       newRunId: deps.newRunId,
       attempts: caller.attempts,
       meter: deps.meter,
+      control: runGate(deps.control),
       exposure,
       admission: {
         admit: (run) => admitRun(quotaContext(run.project), run.runId, run.wallClockMs),
@@ -87,6 +91,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
           definitionFor: deps.definitionFor,
           docsFor: deps.docsFor,
           quotas: quotaContext(run.project),
+          control: callGate(deps.control, run.project),
           // Resolved before the first call is forwarded; a failure refuses every call.
           maxDataClass: exposure(run.project).then((found) => found.allowed),
         }),

@@ -9,6 +9,7 @@ import { UNTRUSTED_OPEN } from "../src/code-tool/present";
 import type { RunReport } from "../src/contracts/code-tool";
 import { ModelOutputError, type ModelProvider, type ModelTurn, type ToolBackend, type TurnRequest } from "../src/eval/types";
 import type { Executor } from "../src/executor";
+import { INITIAL_CONTROL_STATE, memoryControlStore } from "../src/console/control";
 import { memoryMeterSink, meter } from "../src/meter/meter";
 import { codeToolService } from "../src/service";
 import { record } from "./fixtures/policy";
@@ -59,6 +60,7 @@ function app(turns: readonly (ModelTurn | Error)[], options: { codeMode?: () => 
     definitionFor: async () => ({ description: "t", inputSchema: { type: "object", additionalProperties: true } }),
     docsFor: async () => undefined,
     meter: meter({ level: "off", sink: memoryMeterSink() }),
+    control: memoryControlStore({ ...INITIAL_CONTROL_STATE, codeMode: true }),
     now: () => 1_800_000_000_000,
     newRunId: () => `run-${++run}`,
   });
