@@ -505,3 +505,59 @@ describe("names on the tools object that cannot be a tool", { timeout: 30_000 },
     expect(reply.calls.map((call) => call.path)).toEqual(["not_an_approved_tool", "Server2_get_Item"]);
   });
 });
+
+describe("the code tool over the invented GitHub of the eval (task 1.9.5)", { timeout: 60_000 }, () => {
+  async function fixture(script: string): Promise<{ status: string; result?: unknown; error?: { code: string; message: string }; report: { callsByTool: Record<string, number>; errors: { message: string }[] } }> {
+    const response = await worker.fetch("http://harness.invalid/fixture", { method: "POST", body: JSON.stringify({ input: { script, project: "eval" } }) });
+    return ((await response.json()) as { output: never }).output;
+  }
+
+  it("lets a script find all fifteen tools and read the types of one", async () => {
+    const output = await fixture(`const names = await search("github");\nconst docs = await describe("github_list_issues");\nreturn { count: names.length, typing: docs.typing };`);
+    expect(output.error).toBeUndefined();
+    expect(output.result).toMatchObject({ count: 15 });
+    expect(String((output.result as { typing: string }).typing)).toContain("github_list_issues(args:");
+  });
+
+  it("runs a script that calls a fixture tool and returns a summary", async () => {
+    const output = await fixture(`const found = await tools.github_search_issues({ q: "is:issue" });\nreturn { kind: typeof found };`);
+    expect(output.error).toBeUndefined();
+    expect(output.status).toBe("completed");
+    expect(output.report.callsByTool).toEqual({ github_search_issues: 1 });
+  });
+
+  it("passes an error from the fixture to the script, and refuses arguments the schema does not allow", async () => {
+    const output = await fixture(
+      `const seen = [];\n` +
+        `try { await tools.github_get_repository({ owner: "nobody-here", repo: "nothing" }); } catch (error) { seen.push(String(error.message)); }\n` +
+        `try { await tools.github_get_repository({ owner: 7 }); } catch (error) { seen.push(String(error.message)); }\n` +
+        `return seen;`,
+    );
+    expect(output.status).toBe("completed");
+    const seen = output.result as string[];
+    expect(seen[0]).toContain("upstream_error");
+    expect(seen[1]).toContain("schema_invalid");
+  });
+});
+
+describe("search over the invented GitHub, asked the way models ask (task 1.9.5)", { timeout: 60_000 }, () => {
+  it("finds the right tool, first or second, for the phrases the models used in the eval", async () => {
+    const response = await worker.fetch("http://harness.invalid/fixture", {
+      method: "POST",
+      body: JSON.stringify({
+        input: {
+          project: "eval",
+          script:
+            `return [await search("GitHub repository workflow runs CI list"), await search("github repository latest release"), ` +
+            `await search("GitHub actions runs"), await search("releases")].map((found) => found.slice(0, 2));`,
+        },
+      }),
+    });
+    const { output } = (await response.json()) as { output: { result?: unknown; error?: unknown } };
+    expect(output.error).toBeUndefined();
+    // The wanted tool is among the first two. "repository" and "release" each name a tool, so that phrase is a tie.
+    const firstTwo = output.result as string[][];
+    expect(firstTwo.map((found) => found[0])).toEqual(["github_list_workflow_runs", "github_get_repository", "github_list_workflow_runs", "github_list_releases"]);
+    expect(firstTwo[1]).toContain("github_list_releases");
+  });
+});

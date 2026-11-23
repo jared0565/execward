@@ -336,13 +336,36 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         return deny("search", "the policy table is unavailable");
       }
       const cap = await dataClassCap("search");
-      const wanted = query.toLowerCase().split(/\s+/).filter(Boolean);
       // A script only ever learns about tools it could call.
-      return records
+      const paths = records
         .filter((record) => scriptMayCall(record) && record.tier === 0 && withinCap(record, cap))
         .map(pathOf)
-        .filter((path) => wanted.every((word) => path.toLowerCase().includes(word)))
         .sort();
+      const wanted = [...new Set(searchWords(query))];
+      if (wanted.length === 0) return paths;
+      // Models ask in phrases ("list workflow runs CI"), not in exact names. So a tool need not
+      // match every word: each is scored by the words its name or description holds, and
+      // those scoring at least half the best are returned, best first. Measured in task 1.9.5:
+      // requiring every word in the name returned nothing for most first searches.
+      const scored: { path: string; score: number }[] = [];
+      for (const path of paths) {
+        const name = path.toLowerCase();
+        let docs = "";
+        try {
+          docs = (await deps.docsFor?.(path))?.typing.toLowerCase() ?? "";
+        } catch {
+          // The name alone is searched.
+        }
+        const holds = (text: string, word: string): boolean => (word.length < 3 ? searchWords(text).includes(word) : text.includes(word));
+        // A word in the name counts three times a word found only in the description.
+        const score = wanted.reduce((sum, word) => sum + (holds(name, word) ? 3 : holds(docs, word) ? 1 : 0), 0);
+        if (score > 0) scored.push({ path, score });
+      }
+      const best = Math.max(0, ...scored.map((entry) => entry.score));
+      return scored
+        .filter((entry) => entry.score * 2 >= best)
+        .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+        .map((entry) => entry.path);
     },
 
     async describe(path) {
@@ -362,4 +385,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       return { path, server: record.server, tool: record.tool, tier: record.tier, dataClass: record.dataClass, ...(docs ? { typing: docs.typing } : {}) };
     },
   };
+}
+
+/** Lower-case words of a search, with a plural "s" dropped so "runs" finds "run". */
+function searchWords(text: string): string[] {
+  return (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((word) => (word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word));
 }
