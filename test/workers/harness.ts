@@ -8,15 +8,17 @@ import type { DataClass } from "../../src/contracts/policy";
 import type { ExecutionLimits } from "../../src/executor";
 import migration from "../../migrations/0001_policy.sql";
 import auditMigration from "../../migrations/0002_audit_log.sql";
-import { auditLog, d1AuditStore, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
+import { applyRetention, auditLog, d1AuditStore, deleteProjectLogs, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
 import { brokerHost } from "../../src/broker/broker";
 import { d1PolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
 
 interface AuditBody {
-  readonly events: readonly { kind: string; runId: string; project: string; body: unknown }[];
+  readonly events: readonly { kind: string; runId: string; project: string; security?: boolean; body: unknown; ageDays?: number }[];
   readonly together?: boolean;
+  readonly retention?: boolean;
+  readonly eraseProject?: string;
   readonly tamper?: readonly string[];
 }
 
@@ -68,18 +70,25 @@ export default {
     if (route === "/audit") {
       // The audit log on the local D1 database: write events, optionally try to tamper, then read back.
       const body = (await request.json()) as AuditBody;
-      const db = env.DB as unknown as AuditDatabase & { exec(sql: string): Promise<unknown> };
+      const db = env.DB as unknown as AuditDatabase;
       for (const name of ["audit_log_no_update", "audit_log_no_delete"]) await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).bind().run();
       await db.prepare("DROP TABLE IF EXISTS audit_log").bind().run();
+      await db.prepare("DROP TABLE IF EXISTS audit_anchor").bind().run();
       // One statement at a time: the table, then each trigger.
       for (const statement of auditMigration.split(/;\s*\n(?=CREATE)/)) await db.prepare(statement).bind().run();
       const store = d1AuditStore(db);
-      const log = auditLog(store, () => 1_700_000_000_000);
+      // Each event is written at its own time: `ageDays` old, or now.
+      let writing = 0;
+      const startedAt = Date.now();
+      const log = auditLog(store, () => startedAt - (body.events[writing]?.ageDays ?? 0) * 86_400_000);
       const writes = body.together
         ? await Promise.allSettled(body.events.map((event) => log.record(event)))
         : await (async () => {
             const done: PromiseSettledResult<void>[] = [];
-            for (const event of body.events) done.push(...(await Promise.allSettled([log.record(event)])));
+            for (const event of body.events) {
+              done.push(...(await Promise.allSettled([log.record(event)])));
+              writing++;
+            }
             return done;
           })();
       const tamper: string[] = [];
@@ -91,8 +100,19 @@ export default {
           tamper.push(error instanceof Error ? error.message : String(error));
         }
       }
+      const retention = body.retention ? await applyRetention(store, startedAt) : undefined;
+      const erased = body.eraseProject === undefined ? undefined : await deleteProjectLogs(store, auditLog(store, () => startedAt), body.eraseProject);
       const entries = await store.all();
-      return Response.json({ written: writes.filter((write) => write.status === "fulfilled").length, tamper, entries, chain: await verifyChain(entries) });
+      const anchor = (await store.anchor()) ?? null;
+      return Response.json({
+        written: writes.filter((write) => write.status === "fulfilled").length,
+        tamper,
+        retention,
+        erased,
+        anchor,
+        entries,
+        chain: await verifyChain(entries, anchor ?? undefined),
+      });
     }
     if (route === "/policy" || route === "/brokered") {
       // A fresh policy table on the local D1 database for every request.

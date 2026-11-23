@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { fakeToken } from "../src/adversarial/fixtures";
-import { auditLog, AuditLogError, GENESIS_HASH, memoryAuditStore, verifyChain, type AuditEntry, type AuditLog, type AuditStore } from "../src/audit/log";
+import {
+  applyRetention,
+  auditLog,
+  AuditLogError,
+  deleteProjectLogs,
+  GENESIS_HASH,
+  memoryAuditStore,
+  verifyChain,
+  type AuditEntry,
+  type AuditLog,
+  type AuditStore,
+} from "../src/audit/log";
+import { RETENTION } from "../src/limits";
 import { redact, redactText } from "../src/audit/redact";
 import { brokerHost } from "../src/broker/broker";
 import { memoryPolicyStore } from "../src/broker/policy-store";
@@ -79,7 +91,7 @@ describe("the audit log is a hash chain (FR-28)", () => {
   });
 
   it("reports a store failure as an audit log error", async () => {
-    const down: AuditStore = { last: async () => Promise.reject(new Error("disk full")), insert: async () => true, all: async () => [] };
+    const down: AuditStore = { ...memoryAuditStore(), last: async () => Promise.reject(new Error("disk full")) };
     await expect(auditLog(down, () => 0).record(event(1))).rejects.toThrow("the audit log could not be written: disk full");
   });
 
@@ -93,6 +105,111 @@ describe("the audit log is a hash chain (FR-28)", () => {
       expect(code >= 0x20 && code !== 0x7f && !(code >= 0x80 && code <= 0x9f) && code !== 0x2028, `character ${code}`).toBe(true);
     }
     expect(JSON.parse(content)).toEqual({ text: hostile });
+  });
+});
+
+describe("retention (FR-21)", () => {
+  const DAY = 86_400_000;
+  const NOW = 1_800_000_000_000;
+
+  /** Writes one entry per item, each `ageDays` old. */
+  async function aged(items: readonly { ageDays: number; runId?: string; project?: string; security?: boolean }[]) {
+    const store = memoryAuditStore();
+    let at = NOW;
+    const log = auditLog(store, () => at);
+    for (const [index, item] of items.entries()) {
+      at = NOW - item.ageDays * DAY;
+      await log.record({ kind: "test", runId: item.runId ?? `run-${index}`, project: item.project ?? "demo", security: item.security === true, body: { text: `full text ${index}` } });
+    }
+    const verify = async () => verifyChain(store.entries, await store.anchor());
+    return { store, log, verify };
+  }
+
+  it("keeps full text for 7 days and whole entries for 90", () => {
+    expect(RETENTION).toEqual({ fullTextDays: 7, recordDays: 90 });
+  });
+
+  it("removes full text after 7 days, keeps the entry, and the chain still verifies", async () => {
+    const { store, verify } = await aged([{ ageDays: 30 }, { ageDays: 7.01 }, { ageDays: 6.99 }, { ageDays: 0 }]);
+    expect(await applyRetention(store, NOW)).toEqual({ contentExpired: 2, entriesRemoved: 0 });
+    expect(store.entries.map((entry) => entry.content === null)).toEqual([true, true, false, false]);
+    expect(store.entries.map((entry) => entry.seq)).toEqual([1, 2, 3, 4]);
+    expect(await verify()).toEqual({ ok: true, entries: 4 });
+    // Running it again changes nothing.
+    expect(await applyRetention(store, NOW)).toEqual({ contentExpired: 0, entriesRemoved: 0 });
+  });
+
+  it("removes whole entries after 90 days, and the chain verifies from where the log now starts", async () => {
+    const { store, verify } = await aged([{ ageDays: 200 }, { ageDays: 91 }, { ageDays: 89 }, { ageDays: 1 }]);
+    const second = store.entries[1]!;
+    expect(await applyRetention(store, NOW)).toEqual({ contentExpired: 1, entriesRemoved: 2 });
+    expect(store.entries.map((entry) => entry.seq)).toEqual([3, 4]);
+    expect(await store.anchor()).toEqual({ seq: second.seq, hash: second.hash });
+    expect(await verify()).toEqual({ ok: true, entries: 2 });
+    // Without the anchor the shortened log does not verify: the start cannot be faked.
+    expect(await verifyChain(store.entries)).toMatchObject({ ok: false, seq: 3 });
+  });
+
+  it("keeps numbering after everything has been removed", async () => {
+    const { store, log, verify } = await aged([{ ageDays: 100 }, { ageDays: 95 }]);
+    await applyRetention(store, NOW);
+    expect(store.entries).toEqual([]);
+    await log.record({ kind: "test", runId: "new", project: "demo", body: {} });
+    expect(store.entries.map((entry) => entry.seq)).toEqual([3]);
+    expect(await verify()).toEqual({ ok: true, entries: 1 });
+  });
+
+  it("keeps the full text of a whole run for 90 days when the run included a security event", async () => {
+    const { store, verify } = await aged([
+      { ageDays: 30, runId: "bad-run" },
+      { ageDays: 30, runId: "bad-run", security: true },
+      { ageDays: 30, runId: "ordinary-run" },
+      { ageDays: 95, runId: "old-bad-run", security: true },
+    ]);
+    // Entries are written in the order given, so the 95-day one is last; nothing is removed from the front.
+    expect(await applyRetention(store, NOW)).toEqual({ contentExpired: 1, entriesRemoved: 0 });
+    expect(store.entries.map((entry) => [entry.runId, entry.content === null])).toEqual([
+      ["bad-run", false],
+      ["bad-run", false],
+      ["ordinary-run", true],
+      ["old-bad-run", false],
+    ]);
+    expect(await verify()).toEqual({ ok: true, entries: 4 });
+  });
+
+  it("removes a security event with everything else once it is 90 days old", async () => {
+    const { store } = await aged([{ ageDays: 91, security: true }, { ageDays: 1 }]);
+    expect(await applyRetention(store, NOW)).toMatchObject({ entriesRemoved: 1 });
+    expect(store.entries.map((entry) => entry.seq)).toEqual([2]);
+  });
+
+  it("deletes one project's logs on request, records the deletion, and the chain still verifies", async () => {
+    const { store, log, verify } = await aged([
+      { ageDays: 2, project: "acme" },
+      { ageDays: 2, project: "other" },
+      { ageDays: 1, project: "acme", security: true },
+    ]);
+    expect(await deleteProjectLogs(store, log, "acme")).toBe(2);
+    expect(store.entries.map((entry) => [entry.project, entry.kind, entry.content])).toEqual([
+      ["acme", "test", null],
+      ["other", "test", '{"text":"full text 1"}'],
+      ["acme", "test", null],
+      ["acme", "project_logs_deleted", '{"entriesErased":2}'],
+    ]);
+    expect(await verify()).toEqual({ ok: true, entries: 4 });
+  });
+
+  it("still detects tampering after content has been removed", async () => {
+    const { store, verify } = await aged([{ ageDays: 30 }, { ageDays: 30 }, { ageDays: 0 }]);
+    await applyRetention(store, NOW);
+    store.entries[0] = { ...store.entries[0]!, project: "someone-else" };
+    expect(await verify()).toMatchObject({ ok: false, seq: 1 });
+  });
+
+  it("tolerates a removal that was interrupted after the anchor moved", async () => {
+    const { store } = await aged([{ ageDays: 100 }, { ageDays: 1 }]);
+    const first = store.entries[0]!;
+    expect(await verifyChain(store.entries, { seq: first.seq, hash: first.hash })).toEqual({ ok: true, entries: 1 });
   });
 });
 

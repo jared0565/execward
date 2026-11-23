@@ -54,6 +54,14 @@ export const CIRCUIT_BREAKER = {
   policyDenials: 3,
 } as const;
 
+/** How long the audit log keeps things (FR-21, flag 5). */
+export const RETENTION = {
+  /** Scripts, arguments and other full text. */
+  fullTextDays: 7,
+  /** The entry itself, and the full text of any run that included a security event. */
+  recordDays: 90,
+} as const;
+
 /** Spend caps on the platform itself. Model spend is capped separately (FR-51). */
 export const SPEND_CAPS = {
   /** Cloudflare's price for one Dynamic Worker beyond the included 1,000 a month. */
