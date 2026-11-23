@@ -98,6 +98,13 @@ export interface BrokerDeps {
   readonly quotas?: QuotaContext;
   /** Upstream errors in a row before the run is ended. Defaults to `CIRCUIT_BREAKER`. */
   readonly consecutiveUpstreamErrors?: number;
+  /**
+   * The highest data class this run may handle (FR-32, FR-38). A tool above
+   * it is hidden from search and describe and refused when called. If it is a
+   * promise that fails, every call is refused. Left out, there is no cap, so
+   * production wiring must always pass it (see src/service.ts).
+   */
+  readonly maxDataClass?: DataClass | Promise<DataClass>;
   /** The tool's definition, or `undefined` when there is none. No definition, no call. */
   readonly definitionFor: (record: PolicyRecord) => Promise<ToolDefinition | undefined>;
 }
@@ -178,6 +185,19 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
   const callsThisRun = new Map<string, number>();
   let errorsInARow = 0;
 
+  /** The run's data-class cap. A cap that cannot be worked out refuses the call. */
+  async function dataClassCap(path: string): Promise<DataClass | undefined> {
+    try {
+      return await deps.maxDataClass;
+    } catch {
+      return deny(path, "the project's data class is unavailable");
+    }
+  }
+
+  function withinCap(record: PolicyRecord, cap: DataClass | undefined): boolean {
+    return cap === undefined || DATA_CLASSES.indexOf(record.dataClass) <= DATA_CLASSES.indexOf(cap);
+  }
+
   /** Quotas on one call that has passed every policy check (FR-27). */
   async function checkQuotas(path: string, record: PolicyRecord): Promise<void> {
     const count = (callsThisRun.get(path) ?? 0) + 1;
@@ -225,6 +245,10 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       if (!policy.classified || record === undefined) deny(path, "the tool has no policy record");
       if (!scriptMayCall(policy)) deny(path, "the tool may only be called directly, not from a script");
       if (policy.tier !== 0) deny(path, `tier ${policy.tier} tools cannot be called from a script yet`);
+      const cap = await dataClassCap(path);
+      if (cap !== undefined && DATA_CLASSES.indexOf(policy.dataClass) > DATA_CLASSES.indexOf(cap)) {
+        deny(path, `the tool returns ${policy.dataClass} data, and this run may only handle ${cap} data`);
+      }
 
       let definition: ToolDefinition | undefined;
       try {
@@ -279,10 +303,11 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       } catch {
         return deny("search", "the policy table is unavailable");
       }
+      const cap = await dataClassCap("search");
       const wanted = query.toLowerCase().split(/\s+/).filter(Boolean);
       // A script only ever learns about tools it could call.
       return records
-        .filter((record) => scriptMayCall(record) && record.tier === 0)
+        .filter((record) => scriptMayCall(record) && record.tier === 0 && withinCap(record, cap))
         .map(pathOf)
         .filter((path) => wanted.every((word) => path.toLowerCase().includes(word)))
         .sort();
@@ -291,7 +316,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     async describe(path) {
       guard(path);
       const record = await lookup(path);
-      if (record === undefined || !scriptMayCall(record) || record.tier !== 0) {
+      if (record === undefined || !scriptMayCall(record) || record.tier !== 0 || !withinCap(record, await dataClassCap(path))) {
         // Not a security event: asking about a name is not an attempt to use it.
         throw new Error(`no tool named "${path}" is available to scripts`);
       }
