@@ -5,6 +5,9 @@ import { runCodeTool } from "../src/code-tool/run";
 import type { Executor } from "../src/executor";
 import { record } from "./fixtures/policy";
 
+/** These tests are about caller rules, so the tools accept any arguments. */
+const ANY_ARGUMENTS = { description: "test tool", inputSchema: { type: "object", additionalProperties: true } };
+
 const RECORDS = [
   record("list_issues"),
   record("get_issue", { callerRule: "script" }),
@@ -19,7 +22,7 @@ function broker(store: PolicyStore = memoryPolicyStore(RECORDS)) {
     upstreamCalls.push({ tool: called.tool, args });
     return { ok: called.tool };
   };
-  return { host: brokerHost({ store, upstream }), upstreamCalls };
+  return { host: brokerHost({ store, upstream, definitionFor: async () => ANY_ARGUMENTS }), upstreamCalls };
 }
 
 describe("the policy store (FR-50)", () => {
@@ -112,8 +115,8 @@ describe("the broker's caller rules (FR-6, FR-13)", () => {
   it("keeps each run's broker separate", async () => {
     const store = memoryPolicyStore(RECORDS);
     const upstream: Upstream = async () => "ok";
-    const one = brokerHost({ store, upstream });
-    const two = brokerHost({ store, upstream });
+    const one = brokerHost({ store, upstream, definitionFor: async () => ANY_ARGUMENTS });
+    const two = brokerHost({ store, upstream, definitionFor: async () => ANY_ARGUMENTS });
     await expect(one.callTool("github_delete_repo", {})).rejects.toThrow();
     expect(await two.callTool("github_list_issues", {})).toBe("ok");
   });
