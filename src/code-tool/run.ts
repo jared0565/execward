@@ -115,13 +115,31 @@ const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b78
 
 /** What the model sees in place of a final value that was too large (FR-5). */
 export function truncationNotice(partial: unknown, maxBytes: number): { notice: string; partial: unknown } {
-  return {
+  const wrap = (part: unknown): { notice: string; partial: unknown } => ({
     notice:
       `The script's final value was larger than the ${maxBytes}-byte limit and was cut. ` +
       "The text under `partial` is the start of it and is not complete JSON. " +
       "Return less: a count, a summary, or only the fields and items you need.",
-    partial,
-  };
+    partial: part,
+  });
+  if (typeof partial !== "string") return wrap(partial);
+  // The cut text is sent as a JSON string, where every quote, backslash and line break takes
+  // more bytes than it did. Text that was cut to the limit can be over it again once sent, so
+  // it is cut until what is sent fits. (Found with real models, 2026-11-23: a cut list of
+  // records came out 8% over, and the release gate withheld it as a fault.)
+  if (byteLength(wrap(partial)) <= maxBytes) return wrap(partial);
+  // The longest start of the text that fits, found by halving.
+  let fits = 0;
+  let tooLong = partial.length;
+  while (tooLong - fits > 1) {
+    const middle = Math.floor((fits + tooLong) / 2);
+    if (byteLength(wrap(partial.slice(0, middle))) <= maxBytes) fits = middle;
+    else tooLong = middle;
+  }
+  // Not half of a two-part character.
+  const last = partial.charCodeAt(fits - 1);
+  if (last >= 0xd800 && last <= 0xdbff) fits -= 1;
+  return wrap(partial.slice(0, fits));
 }
 
 function byteLength(value: unknown): number {
