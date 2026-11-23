@@ -262,7 +262,11 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     if (ended) deny(path, "the run was ended by an earlier refusal");
   }
 
-  /** FR-17: a switch thrown mid-run ends the script at its next call. Nothing carries on. */
+  /**
+   * FR-17: a switch thrown mid-run ends the script. This asks at every call; how fresh the
+   * answer is belongs to whoever supplies `control` (production reuses one for up to
+   * `RUN_RECHECK_MS`, see src/service.ts). Nothing carries on after a refusal.
+   */
   async function switches(path: string): Promise<void> {
     if (!deps.control) return;
     let stopped: ExecWardError | undefined;
