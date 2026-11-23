@@ -1,0 +1,233 @@
+/**
+ * The database-backed stores, on the local D1 database inside the local
+ * Workers runtime, through the test-only Worker in ./workers/harness.ts.
+ *
+ * Local D1 is SQLite, as deployed D1 is, so the SQL is the same. What this
+ * cannot show is behaviour under real concurrent Workers; the "all at once"
+ * cases below run in one process.
+ */
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { unstable_startWorker } from "wrangler";
+import { INITIAL_CONTROL_STATE, type ControlState } from "../src/console/control";
+import { ESCALATION_MENU, type EscalationItem } from "../src/console/escalations";
+
+let worker: Awaited<ReturnType<typeof unstable_startWorker>>;
+
+beforeAll(async () => {
+  worker = await unstable_startWorker({ config: "test/workers/wrangler.jsonc", 
+    // Its own local database folder: another test file uses the same Worker, and two processes on one SQLite file lock each other.
+    dev: { server: { port: 0 }, inspector: false, logLevel: "error", persist: "test/workers/.wrangler/state-stores" },
+  });
+}, 60_000);
+
+afterAll(async () => {
+  await worker?.dispose();
+});
+
+type Result = { value: unknown } | { error: string };
+interface Reply {
+  readonly results: Result[];
+  readonly counters: { id: string; total: number }[];
+}
+type Op = [store: string, op: string, ...args: unknown[]];
+
+async function stores(ops: readonly Op[], options: { together?: boolean; noTables?: boolean; rawSql?: string[] } = {}): Promise<Reply> {
+  const response = await worker.fetch("http://harness.invalid/stores", {
+    method: "POST",
+    body: JSON.stringify({ ops: ops.map(([store, op, ...args]) => ({ store, op, args })), ...options }),
+  });
+  return (await response.json()) as Reply;
+}
+const values = (reply: Reply): unknown[] => reply.results.map((result) => ("value" in result ? result.value : `error: ${result.error}`));
+
+const MINUTE = 60_000;
+const T = 1_800_000_000_000;
+
+describe("database-backed stores, on a local D1 database", { timeout: 30_000 }, () => {
+  describe("quota counters (FR-27)", () => {
+    it("adds to a counter and returns the running total", async () => {
+      const reply = await stores([
+        ["quota", "add", "runs:work", MINUTE, 1, T],
+        ["quota", "add", "runs:work", MINUTE, 1, T + 1_000],
+        ["quota", "add", "runs:work", MINUTE, 5, T + 2_000],
+      ]);
+      expect(values(reply)).toEqual([1, 2, 7]);
+    });
+
+    it("starts a new count in each window, and keeps keys and window sizes apart", async () => {
+      const startOfWindow = Math.ceil(T / MINUTE) * MINUTE;
+      const reply = await stores([
+        ["quota", "add", "runs:work", MINUTE, 1, startOfWindow],
+        ["quota", "add", "runs:work", MINUTE, 1, startOfWindow + MINUTE - 1],
+        ["quota", "add", "runs:work", MINUTE, 1, startOfWindow + MINUTE],
+        ["quota", "add", "runs:other", MINUTE, 1, startOfWindow],
+        ["quota", "add", "runs:work", 24 * 60 * MINUTE, 1, startOfWindow],
+      ]);
+      expect(values(reply)).toEqual([1, 2, 1, 1, 1]);
+      expect(reply.counters.length).toBe(4);
+    });
+
+    it("loses no count when twenty adds arrive at once", async () => {
+      const ops: Op[] = Array.from({ length: 20 }, () => ["quota", "add", "runs:work", MINUTE, 1, T]);
+      const reply = await stores(ops, { together: true });
+      expect((values(reply) as number[]).sort((a, b) => a - b)).toEqual(Array.from({ length: 20 }, (_, n) => n + 1));
+      expect(reply.counters).toMatchObject([{ total: 20 }]);
+    });
+
+    it("sweeps counters whose window has ended, and only those", async () => {
+      const reply = await stores([
+        ["quota", "add", "runs:work", MINUTE, 1, T],
+        ["quota", "add", "runs:work", 24 * 60 * MINUTE, 1, T],
+        ["sweep", "counters", T + 2 * MINUTE],
+      ]);
+      expect(reply.counters.map((counter) => counter.id.split("@")[1]?.split(":")[0])).toEqual(["86400000"]);
+    });
+
+    it("fails, so that the caller refuses the run, when the table is missing", async () => {
+      const reply = await stores([["quota", "add", "runs:work", MINUTE, 1, T], ["quota", "acquire", "running:work", "run-1", 2, MINUTE, T]], { noTables: true });
+      expect(reply.results.every((result) => "error" in result)).toBe(true);
+    });
+  });
+
+  describe("concurrent-run slots (FR-27)", () => {
+    it("gives out as many slots as the limit and no more", async () => {
+      const reply = await stores([
+        ["quota", "acquire", "running:work", "run-1", 2, MINUTE, T],
+        ["quota", "acquire", "running:work", "run-2", 2, MINUTE, T],
+        ["quota", "acquire", "running:work", "run-3", 2, MINUTE, T],
+        ["quota", "acquire", "running:other", "run-4", 2, MINUTE, T],
+      ]);
+      expect(values(reply)).toEqual([true, true, false, true]);
+    });
+
+    it("frees a slot on release, and on its own after its time is up", async () => {
+      const reply = await stores([
+        ["quota", "acquire", "running:work", "run-1", 1, MINUTE, T],
+        ["quota", "acquire", "running:work", "run-2", 1, MINUTE, T],
+        ["quota", "release", "running:work", "run-1"],
+        ["quota", "acquire", "running:work", "run-2", 1, MINUTE, T],
+        // run-2 never releases. Its slot lapses a minute later.
+        ["quota", "acquire", "running:work", "run-3", 1, MINUTE, T + MINUTE - 1],
+        ["quota", "acquire", "running:work", "run-3", 1, MINUTE, T + MINUTE],
+      ]);
+      expect(values(reply)).toEqual([true, false, null, true, false, true]);
+    });
+
+    it("never gives out more than the limit when ten runs ask at once", async () => {
+      const ops: Op[] = Array.from({ length: 10 }, (_, n) => ["quota", "acquire", "running:work", `run-${n}`, 3, MINUTE, T]);
+      const reply = await stores(ops, { together: true });
+      expect(values(reply).filter((taken) => taken === true).length).toBe(3);
+    });
+  });
+
+  describe("the owner's switches (FR-16, FR-27)", () => {
+    const on: ControlState = { ...INITIAL_CONTROL_STATE, codeMode: true, version: 1 };
+
+    it("reads everything as off when nothing has been written", async () => {
+      expect(values(await stores([["control", "read"]]))).toEqual([INITIAL_CONTROL_STATE]);
+    });
+
+    it("writes a change and reads it back", async () => {
+      const killed: ControlState = { ...on, killed: true, pausedProjects: ["work"], blockedTools: ["github_get_file"], version: 2 };
+      const reply = await stores([["control", "write", on, 0], ["control", "read"], ["control", "write", killed, 1], ["control", "read"]]);
+      expect(values(reply)).toEqual([true, on, true, killed]);
+    });
+
+    it("refuses a write made from a stale read", async () => {
+      const reply = await stores([
+        ["control", "write", on, 0],
+        // A second first-write, and a write that names a version that is no longer current.
+        ["control", "write", { ...on, killed: true }, 0],
+        ["control", "write", { ...on, version: 3 }, 2],
+        ["control", "read"],
+      ]);
+      expect(values(reply)).toEqual([true, false, false, on]);
+    });
+
+    it("lets exactly one of five writers win when they all start from the same read", async () => {
+      const ops: Op[] = Array.from({ length: 5 }, (_, n) => ["control", "write", { ...on, pausedProjects: [`project-${n}`] }, 0]);
+      const reply = await stores(ops, { together: true });
+      expect(values(reply).filter((won) => won === true).length).toBe(1);
+    });
+
+    it("fails, so that every reader fails closed, on a state it cannot understand or a missing table", async () => {
+      const corrupt = await stores([["control", "read"]], { rawSql: [`INSERT INTO control_state (id, version, state) VALUES (1, 4, '{"codeMode":"yes"}')`] });
+      expect(values(corrupt)).toEqual(["error: the stored control state is not valid"]);
+      const missing = await stores([["control", "read"]], { noTables: true });
+      expect("error" in missing.results[0]!).toBe(true);
+    });
+
+    it("allows only one row", async () => {
+      // The database itself refuses a second row; the request fails with its error.
+      const attempt = worker
+        .fetch("http://harness.invalid/stores", { method: "POST", body: JSON.stringify({ ops: [], rawSql: [`INSERT INTO control_state (id, version, state) VALUES (2, 1, '{}')`] }) })
+        .then(async (response) => (response.ok ? "accepted" : await response.text()));
+      await expect(attempt.catch((error: Error) => error.message)).resolves.toContain("CHECK constraint failed");
+    });
+  });
+
+  describe("the escalation queue (FR-44)", () => {
+    const item = (id: string, createdAt: number, status: EscalationItem["status"] = "open"): EscalationItem => ({
+      id,
+      trigger: "security_exception",
+      project: "work",
+      createdAt,
+      urgent: true,
+      status,
+      runId: "run-7",
+      error: { code: "policy_denied", message: "a call was refused: the tool has no policy record" },
+      context: { toolPath: "github_get_file" },
+      options: ESCALATION_MENU.security_exception.options,
+      recommended: { optionId: "keep_paused", rule: "Keep paused, always. A false positive is never recommended." },
+      safeAction: "Project paused at once",
+      expiresAt: null,
+    });
+
+    it("stores an item whole and reads it back", async () => {
+      const first = item("k3Jx9QpLm2Zt7VbN4wRs", T);
+      const reply = await stores([["escalations", "put", first], ["escalations", "get", first.id], ["escalations", "get", "no-such-item"]]);
+      expect(values(reply)).toEqual([null, first, null]);
+    });
+
+    it("replaces an item when it changes, and lists items oldest first", async () => {
+      const older = item("aaaaaaaaaaaaaaaaaaaa", T);
+      const newer = item("bbbbbbbbbbbbbbbbbbbb", T + 1_000);
+      const resolved: EscalationItem = { ...older, status: "resolved", resolution: { optionId: "false_positive", by: "owner", at: T + 5_000, reason: "reviewed" } };
+      const reply = await stores([["escalations", "put", newer], ["escalations", "put", older], ["escalations", "put", resolved], ["escalations", "all"]]);
+      expect(values(reply)[3]).toEqual([resolved, newer]);
+    });
+  });
+
+  describe("project records (FR-32)", () => {
+    it("stores a project's data class, and reads a project with no record as absent", async () => {
+      const reply = await stores([
+        ["projects", "put", { project: "work", dataClass: "internal" }],
+        ["projects", "get", "work"],
+        ["projects", "get", "never-set-up"],
+        ["projects", "put", { project: "work", dataClass: "confidential" }],
+        ["projects", "get", "work"],
+      ]);
+      expect(values(reply)).toEqual([null, { project: "work", dataClass: "internal" }, null, null, { project: "work", dataClass: "confidential" }]);
+    });
+
+    it("refuses to set a project to client personal data while the gate is uncleared", async () => {
+      const reply = await stores([
+        ["projects", "put", { project: "acme", dataClass: "client_personal" }],
+        ["projects", "get", "acme"],
+        ["projects", "put", { project: "acme", dataClass: "client_personal" }, { cleared: true }],
+        ["projects", "get", "acme"],
+      ]);
+      expect(values(reply)).toEqual([
+        'error: the project "acme" cannot be set to client personal data until gate G.7 is cleared',
+        null,
+        null,
+        { project: "acme", dataClass: "client_personal" },
+      ]);
+    });
+
+    it("fails on a data class it does not know", async () => {
+      const reply = await stores([["projects", "get", "work"]], { rawSql: [`INSERT INTO projects (project, data_class) VALUES ('work', 'everything')`] });
+      expect(values(reply)).toEqual(["error: the project's record holds an unknown data class"]);
+    });
+  });
+});

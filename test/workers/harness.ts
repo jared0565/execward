@@ -8,6 +8,8 @@ import type { DataClass } from "../../src/contracts/policy";
 import type { ExecutionLimits } from "../../src/executor";
 import migration from "../../migrations/0001_policy.sql";
 import auditMigration from "../../migrations/0002_audit_log.sql";
+import stateMigration from "../../migrations/0003_state.sql";
+import { d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, putProjectRecord, sweepQuotaCounters, type StateDatabase } from "../../src/storage/d1-stores";
 import { applyRetention, auditLog, d1AuditStore, deleteProjectLogs, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
 import { brokerHost } from "../../src/broker/broker";
 import { d1PolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
@@ -20,6 +22,19 @@ interface AuditBody {
   readonly retention?: boolean;
   readonly eraseProject?: string;
   readonly tamper?: readonly string[];
+}
+
+interface StoreOp {
+  readonly store: string;
+  readonly op: string;
+  readonly args: readonly unknown[];
+}
+
+interface StoresBody {
+  readonly ops: readonly StoreOp[];
+  readonly together?: boolean;
+  readonly noTables?: boolean;
+  readonly rawSql?: readonly string[];
 }
 
 interface PolicyBody {
@@ -67,6 +82,42 @@ export default {
   async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like }): Promise<Response> {
     const calls: { path: string; args: unknown }[] = [];
     const route = new URL(request.url).pathname;
+    if (route === "/stores") {
+      // The database-backed stores on the local D1 database. Each request starts from empty tables
+      // and runs a list of operations, in order or all at once, returning each one's result.
+      const body = (await request.json()) as StoresBody;
+      const db = env.DB as unknown as StateDatabase;
+      for (const table of ["quota_counters", "quota_slots", "control_state", "escalations", "projects"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
+      if (!body.noTables) {
+        // One statement at a time, with the comment lines taken out first.
+        const sql = stateMigration
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))
+          .join("\n");
+        for (const statement of sql.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
+      }
+      for (const sql of body.rawSql ?? []) await db.prepare(sql).bind().run();
+      const stores: Record<string, Record<string, (...args: never[]) => Promise<unknown>>> = {
+        quota: d1QuotaStore(db) as never,
+        control: d1ControlStore(db) as never,
+        escalations: d1EscalationStore(db) as never,
+        projects: { ...d1ProjectStore(db), put: (record: never, gate: never) => putProjectRecord(db, record, gate) } as never,
+        sweep: { counters: (now: never) => sweepQuotaCounters(db, now) } as never,
+      };
+      const perform = async (op: StoreOp): Promise<unknown> => {
+        try {
+          const result = await stores[op.store]?.[op.op]?.(...(op.args as never[]));
+          return { value: result ?? null };
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : String(error) };
+        }
+      };
+      const results: unknown[] = [];
+      if (body.together) results.push(...(await Promise.all(body.ops.map(perform))));
+      else for (const op of body.ops) results.push(await perform(op));
+      const counters = body.noTables ? [] : (await db.prepare("SELECT id, total FROM quota_counters ORDER BY id").all<{ id: string; total: number }>()).results;
+      return Response.json({ results, counters });
+    }
     if (route === "/audit") {
       // The audit log on the local D1 database: write events, optionally try to tamper, then read back.
       const body = (await request.json()) as AuditBody;
