@@ -14,6 +14,7 @@ import {
 } from "../src/broker/exposure";
 import { memoryPolicyStore } from "../src/broker/policy-store";
 import { memoryQuotaStore } from "../src/broker/quotas";
+import { attemptGate } from "../src/code-tool/attempts";
 import type { DataClass } from "../src/contracts/policy";
 import type { Executor } from "../src/executor";
 import { codeToolService, type CodeToolServiceDeps } from "../src/service";
@@ -200,7 +201,7 @@ describe("the code tool with every control in place", () => {
 
   it("returns confidential data to an approved route in a confidential project, and records the provider", async () => {
     const { serve, logged, audit } = service(calling("github_get_file"));
-    const output = await serve(input("client"), { providerRoute: "anthropic_api_commercial" });
+    const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
     expect(output).toMatchObject({ status: "completed", dataClass: "confidential", result: [{ from: "get_file" }] });
     expect(logged()[0]).toMatchObject({ kind: "run_started", provider: "anthropic_api_commercial", allowedDataClass: "confidential" });
     expect(await verifyChain(audit.entries)).toMatchObject({ ok: true });
@@ -208,7 +209,7 @@ describe("the code tool with every control in place", () => {
 
   it("refuses the same call from a personal plan, before the file is read", async () => {
     const { serve, upstreamCalls, logged } = service(calling("github_get_file"));
-    const output = await serve(input("client"), { providerRoute: "claude_personal_plan" });
+    const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: "claude_personal_plan" });
     expect(output).toMatchObject({ status: "error", error: { code: "policy_denied" } });
     expect(JSON.stringify(output)).not.toContain("CANARY");
     expect(upstreamCalls).toEqual([]);
@@ -220,7 +221,7 @@ describe("the code tool with every control in place", () => {
 
   it("treats a caller with no established route as unknown, and records it as that", async () => {
     const { serve, upstreamCalls, logged } = service(calling("github_list_issues", "github_get_file"));
-    const output = await serve(input("client"), { providerRoute: undefined });
+    const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: undefined });
     expect(output).toMatchObject({ status: "error", error: { code: "policy_denied" } });
     expect(upstreamCalls).toEqual(["list_issues"]);
     expect(logged()[0]).toMatchObject({ provider: "unknown", allowedDataClass: "internal" });
@@ -228,14 +229,14 @@ describe("the code tool with every control in place", () => {
 
   it("holds a project to its own class even on an approved route", async () => {
     const { serve, upstreamCalls } = service(calling("github_list_issues", "github_get_file"));
-    const output = await serve(input("work"), { providerRoute: "anthropic_api_commercial" });
+    const output = await serve(input("work"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
     expect(output).toMatchObject({ status: "error", error: { code: "policy_denied", message: expect.stringContaining("this run may only handle internal data") as string } });
     expect(upstreamCalls).toEqual(["list_issues"]);
   });
 
   it("gives a project with no record nothing above public", async () => {
     const { serve, upstreamCalls } = service(calling("github_list_issues"));
-    const output = await serve(input("never-set-up"), { providerRoute: "anthropic_api_commercial" });
+    const output = await serve(input("never-set-up"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
     expect(output).toMatchObject({ status: "error", error: { code: "policy_denied" } });
     expect(upstreamCalls).toEqual([]);
   });
@@ -244,26 +245,26 @@ describe("the code tool with every control in place", () => {
     let executed = 0;
     const counting: Executor = { name: "scripted", execute: async () => (executed++, { status: "completed", result: 1, logs: [], truncated: false }) };
     const { serve, logged } = service(counting, { projects: { get: async () => Promise.reject(new Error("db down")) } });
-    const output = await serve(input("client"), { providerRoute: "anthropic_api_commercial" });
+    const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
     expect(output).toMatchObject({ status: "refused", error: { code: "policy_denied", message: "the project's data class could not be read, so the run was not started" } });
     expect(executed).toBe(0);
     expect(logged()).toMatchObject([{ kind: "run_refused", security: true }]);
     // The refused run did not keep its slot: two more runs fit under the limit of two at once.
     const working = service(counting);
-    expect((await working.serve(input("work"), { providerRoute: "unknown" })).status).toBe("completed");
+    expect((await working.serve(input("work"), { attempts: attemptGate(), providerRoute: "unknown" })).status).toBe("completed");
   });
 
   it("applies quotas: the eleventh run in a minute is refused", async () => {
     const { serve } = service(calling());
-    for (let n = 0; n < 10; n++) expect((await serve(input("work"), { providerRoute: "unknown" })).status, `run ${n + 1}`).toBe("completed");
-    expect(await serve(input("work"), { providerRoute: "unknown" })).toMatchObject({ status: "refused", error: { code: "quota_exceeded" } });
+    for (let n = 0; n < 10; n++) expect((await serve(input("work"), { attempts: attemptGate(), providerRoute: "unknown" })).status, `run ${n + 1}`).toBe("completed");
+    expect(await serve(input("work"), { attempts: attemptGate(), providerRoute: "unknown" })).toMatchObject({ status: "refused", error: { code: "quota_exceeded" } });
   });
 
   it("writes every run to the one log, in a chain that verifies", async () => {
     const { serve, audit } = service(calling("github_list_issues"));
-    await serve(input("work"), { providerRoute: "unknown" });
-    await serve({ script: "return fetch('x');", project: "work" }, { providerRoute: "unknown" });
-    await serve(input("client"), { providerRoute: "openai_api_business" });
+    await serve(input("work"), { attempts: attemptGate(), providerRoute: "unknown" });
+    await serve({ script: "return fetch('x');", project: "work" }, { attempts: attemptGate(), providerRoute: "unknown" });
+    await serve(input("client"), { attempts: attemptGate(), providerRoute: "openai_api_business" });
     expect(audit.entries.map((entry) => entry.kind)).toEqual(["run_started", "run_finished", "run_refused", "run_started", "run_finished"]);
     expect(await verifyChain(audit.entries)).toEqual({ ok: true, entries: 5 });
   });

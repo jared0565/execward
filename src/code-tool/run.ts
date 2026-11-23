@@ -14,6 +14,7 @@ import type { ExecutionFailureKind, ExecutionLimits, Executor, SandboxHost } fro
 import { RUN_LIMITS, SCRIPT_LIMITS } from "../limits";
 import { checkScript } from "../static-check/check";
 import type { AuditLog } from "../audit/log";
+import type { AttemptGate } from "./attempts";
 
 /**
  * The script's way out for one run. A host that refuses a call on security
@@ -61,6 +62,11 @@ export interface CodeToolDeps {
    * Left out, it is `public`: the most cautious answer. Task 1.3.7 sets it per project.
    */
   readonly allowedDataClass?: (project: string) => DataClass;
+  /**
+   * Self-correction for the task this run belongs to (FR-41): counts failed
+   * runs in a row and refuses the next one once the task is closed.
+   */
+  readonly attempts?: AttemptGate;
   /**
    * What this run may handle, and through which provider route its reply
    * leaves (FR-38). Takes the place of `allowedDataClass` when given. If it
@@ -189,6 +195,13 @@ function withCondition(message: string, script: string, line: number | undefined
 }
 
 export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolOutput> {
+  const output = await runOnce(rawInput, deps);
+  // Every ending is counted, whichever line of `runOnce` returned it.
+  deps.attempts?.settle(output);
+  return output;
+}
+
+async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolOutput> {
   const started = deps.now();
   const runId = deps.newRunId();
   const limits = deps.limits ?? RUN_LIMITS;
@@ -218,7 +231,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     recordsWritten: 0,
     // The error that ended the run, then any failed calls the script survived.
     errors: [...errors, ...callErrors(journal, shownPath)],
-    retries: 0,
+    retries: deps.attempts?.retries() ?? 0,
     // A run ends at its first failed assertion, so `failed` is 0 or 1.
     assertions: { passed: assertionsPassed, failed: assertionFailed ? 1 : 0 },
     sideEffects: [],
@@ -262,6 +275,10 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
       rawProject,
     );
   }
+
+  // FR-41: a task that was closed, by a security failure or by using up its retries, runs nothing more.
+  const closed = deps.attempts?.blocked();
+  if (closed) return refused(closed, input.data.script, input.data.project);
 
   const admitted = { runId, project: input.data.project };
   if (deps.admission) {

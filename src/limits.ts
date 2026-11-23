@@ -54,6 +54,12 @@ export const CIRCUIT_BREAKER = {
   policyDenials: 3,
 } as const;
 
+/** Self-correction (FR-41). */
+export const SELF_CORRECTION = {
+  /** Failed runs in a row the model may follow with another try. The next failure closes the task. */
+  maxRetries: 2,
+} as const;
+
 /** How long the audit log keeps things (FR-21, flag 5). */
 export const RETENTION = {
   /** Scripts, arguments and other full text. */
