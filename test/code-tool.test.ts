@@ -119,7 +119,7 @@ describe("the code tool's output contract (contract 2)", () => {
         retries: 0,
         assertions: { passed: 0, failed: 0 },
         sideEffects: [],
-        verification: "not_applicable",
+        verification: "unreviewed",
         durationMs: 25,
       },
     });
