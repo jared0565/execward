@@ -15,7 +15,12 @@ import { BACKUP_TABLES, backUp, restore, type BackupBucket, type BackupDatabase 
 import { brokerHost } from "../../src/broker/broker";
 import { d1PolicyStore, memoryPolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
 import { githubPinsAndPolicy, githubUpstream } from "../../src/connectors/github";
-import { registry } from "../../src/registry/registry";
+import { approve, registry, type Pin } from "../../src/registry/registry";
+import { githubFixtureBackend } from "../../src/eval/fixtures/github-backend";
+import { buildWorld } from "../../src/eval/fixtures/world";
+import { GITHUB_READ_ONLY_TOOLS } from "../../src/tools/github-inventory";
+import type { PolicyRecord } from "../../src/contracts/policy";
+import type { ToolBackend } from "../../src/eval/types";
 import { escalationQueue } from "../../src/console/escalations";
 import { runScheduled } from "../../src/worker/scheduled";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
@@ -110,6 +115,39 @@ function scriptedHost(calls: { path: string; args: unknown }[]): RunHost {
   };
 }
 
+/**
+ * The invented GitHub the eval uses (src/eval/fixtures), wrapped as the real tools are: each tool
+ * approved and pinned, with the policy record from the inventory. Built once and kept, since it never changes.
+ */
+let fixtureStack: Promise<{ backend: ToolBackend; pins: Pin[]; records: PolicyRecord[] }> | undefined;
+function fixture(): Promise<{ backend: ToolBackend; pins: Pin[]; records: PolicyRecord[] }> {
+  fixtureStack ??= (async () => {
+    const backend = githubFixtureBackend(buildWorld());
+    const pins: Pin[] = [];
+    const records: PolicyRecord[] = [];
+    for (const tool of backend.definitions) {
+      const draft = GITHUB_READ_ONLY_TOOLS.find((entry) => entry.tool === tool.name);
+      if (!draft) throw new Error(`the fixture tool "${tool.name}" is not in the inventory`);
+      const pin = await approve({ server: "github", tool: tool.name, description: tool.description, inputSchema: tool.inputSchema });
+      pins.push(pin);
+      records.push({
+        server: draft.server,
+        tool: draft.tool,
+        definitionHash: pin.hash,
+        callerRule: draft.callerRule,
+        dataClass: draft.dataClass,
+        tier: draft.tier,
+        sensitive: draft.sensitive,
+        outbound: draft.outbound,
+        destinationAllowlist: [...draft.destinationAllowlist],
+        quotas: { ...draft.quotas },
+      });
+    }
+    return { backend, pins, records };
+  })();
+  return fixtureStack;
+}
+
 export default {
   async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like; GITHUB_TOKEN?: string; BACKUPS?: BackupBucket }): Promise<Response> {
     const calls: { path: string; args: unknown }[] = [];
@@ -202,6 +240,27 @@ export default {
         project: (await d1ProjectStore(db).get("work")) ?? null,
         escalations: (await db.prepare("SELECT id FROM escalations").bind().all<{ id: string }>()).results.length,
       });
+    }
+    if (route === "/fixture") {
+      // The code tool over the invented GitHub, for the Code Mode arm of the eval (task 1.9.5).
+      const body = (await request.json()) as { input?: unknown };
+      const { backend, pins, records } = await fixture();
+      const pinned = registry({ pins, current: async (path) => pins.find((pin) => pin.path === path)?.definition });
+      const output = await runCodeTool(body.input, {
+        executor: dynamicWorkerExecutor(env.LOADER),
+        audit: auditLog(memoryAuditStore(), () => Date.now()),
+        hostFor: () =>
+          brokerHost({
+            store: memoryPolicyStore(records),
+            definitionFor: (record) => pinned.definitionFor(record),
+            docsFor: (path) => pinned.docsFor(path),
+            upstream: ({ record, args }) => backend.call(record.tool, args),
+          }),
+        allowedDataClass: () => "confidential",
+        newRunId: () => crypto.randomUUID(),
+        now: () => Date.now(),
+      });
+      return Response.json({ output });
     }
     if (route === "/github") {
       // The GitHub connector behind the whole stack: code tool, sandbox, broker, pinned

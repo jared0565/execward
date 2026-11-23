@@ -7,7 +7,10 @@
  * --cap   US dollars. Required, so that no run starts without a stated limit.
  * --runs  Times each task runs on each model. Default 1.
  * --out   Where to write one JSON line per attempt. Default eval-results/<time>.jsonl.
- * --arm   direct or tool_search. May be repeated to run both. Default direct.
+ * --arm   direct, tool_search or code. May be repeated. Default direct.
+ *         code runs each script on the deployed test Worker; its address and test secret come
+ *         from EXECWARD_TEST_URL and EXECWARD_TEST_SECRET, or the files in the .execward folder
+ *         in the home folder.
  * --direct-route  Skip OpenRouter and call each provider's own API.
  * --resume  With --out naming an existing file: keep its results and run only what is missing.
  * --golden  Run the golden tasks only (task 0.2.4).
@@ -15,12 +18,16 @@
  * --only  Run just this task id. May be repeated.
  * --show-answers  Also print each final answer to the console. Answers are always saved in the file.
  * --show-tool-errors  Print each tool call that returned an error, with its arguments.
+ * --show-scripts  With --arm code: print each script and the start of its result.
  *
  * Exits 1 if a key is missing (before any call) or the cap stopped the run early.
  * A wrong answer is a result, not an error, and does not change the exit code.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { codeBackend, remoteFixtureRunner, type CodeBackend, type CodeRunner } from "../src/eval/arms/code";
 import { toolSearchBackend } from "../src/eval/arms/tool-search";
 import { githubFixtureBackend } from "../src/eval/fixtures/github-backend";
 import { buildWorld } from "../src/eval/fixtures/world";
@@ -65,7 +72,18 @@ async function main(): Promise<number> {
   const only = option("only");
   const arms = (option("arm").length === 0 ? ["direct"] : option("arm")) as Arm[];
   for (const arm of arms) {
-    if (arm !== "direct" && arm !== "tool_search") throw new Error(`Cannot start: unknown arm ${String(arm)}`);
+    if (arm !== "direct" && arm !== "tool_search" && arm !== "code") throw new Error(`Cannot start: unknown arm ${String(arm)}`);
+  }
+  let codeRunner: CodeRunner | undefined;
+  if (arms.includes("code")) {
+    const setting = (name: string, file: string): string => {
+      const fromEnv = process.env[name];
+      if (fromEnv) return fromEnv.trim();
+      const path = join(homedir(), ".execward", file);
+      if (!existsSync(path)) throw new Error(`Cannot start: set ${name}, or create ${path}`);
+      return readFileSync(path, "utf8").trim();
+    };
+    codeRunner = remoteFixtureRunner(setting("EXECWARD_TEST_URL", "test-worker-url"), setting("EXECWARD_TEST_SECRET", "test-worker-secret"));
   }
   const directRoute = process.argv.includes("--direct-route");
   const out = option("out")[0] ?? `eval-results/${new Date().toISOString().replaceAll(":", "-")}.jsonl`;
@@ -74,6 +92,7 @@ async function main(): Promise<number> {
   const backend = githubFixtureBackend(world);
   const showAnswers = process.argv.includes("--show-answers");
   const showToolErrors = process.argv.includes("--show-tool-errors");
+  const showScripts = process.argv.includes("--show-scripts");
   const tasks = (process.argv.includes("--golden") ? buildGoldenTasks(world) : buildGithubTasks(world))
     .filter((task) => only.length === 0 || only.includes(task.id));
   if (tasks.length === 0) throw new Error("Cannot start: no task matches --only");
@@ -132,7 +151,21 @@ async function main(): Promise<number> {
       }
       const routes = directRoute ? job.target.routes.slice(1) : job.target.routes;
       // The tool-search wrapper remembers what a run has found, so each run gets its own.
-      const armBackend = job.arm === "tool_search" ? toolSearchBackend(backend) : backend;
+      // The code wrapper holds the retry count of the task, so each run gets its own too.
+      const runner = codeRunner;
+      const shownRunner: CodeRunner | undefined =
+        runner && showScripts
+          ? async (input) => {
+              const output = await runner(input);
+              console.log(`script in ${job.task.id} on ${job.target.name}:
+${String(input.script)}
+-> ${JSON.stringify(output).slice(0, 1500)}
+`);
+              return output;
+            }
+          : runner;
+      const code: CodeBackend | undefined = job.arm === "code" && shownRunner ? codeBackend(shownRunner) : undefined;
+      const armBackend = code ?? (job.arm === "tool_search" ? toolSearchBackend(backend) : backend);
       const runBackend: ToolBackend = !showToolErrors
         ? armBackend
         : {
@@ -161,7 +194,7 @@ async function main(): Promise<number> {
       for (const attempt of routed.attempts) {
         const cost = costUsd(job.target, attempt);
         spentUsd += cost;
-        appendFileSync(out, `${JSON.stringify({ target: job.target.name, run: job.run, costUsd: cost, ...attempt, answer: attempt === routed.record ? answer : null })}\n`);
+        appendFileSync(out, `${JSON.stringify({ target: job.target.name, run: job.run, costUsd: cost, ...attempt, answer: attempt === routed.record ? answer : null, ...(code && attempt === routed.record ? { codeRuns: code.outcomes } : {}) })}\n`);
       }
       results.push({ job, record: routed.record });
     }

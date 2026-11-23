@@ -109,7 +109,9 @@ export async function runTask(
           role: "tool",
           callId: call.id,
           name: call.name,
-          result: JSON.stringify(result) ?? "null",
+          // Text is passed as it is. Written as JSON it would gain a quote mark and an escape
+          // for every quote inside it, and the model would pay for those.
+          result: typeof result === "string" ? result : (JSON.stringify(result) ?? "null"),
           isError: false,
         });
       } catch (error) {

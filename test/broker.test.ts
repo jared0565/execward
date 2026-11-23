@@ -107,7 +107,12 @@ describe("the broker's caller rules (FR-6, FR-13)", () => {
   it("lets search and describe show only what a script could call", async () => {
     const { host } = broker();
     expect(await host.search("")).toEqual(["github_get_issue", "github_list_issues"]);
-    expect(await host.search("list ISSUES")).toEqual(["github_list_issues"]);
+    // Best match first. A tool need not hold every word, and one that holds none is left out.
+    expect(await host.search("list ISSUES")).toEqual(["github_list_issues", "github_get_issue"]);
+    expect(await host.search("please list the open issues in a repository")).toEqual(["github_list_issues", "github_get_issue"]);
+    expect(await host.search("weather forecast")).toEqual([]);
+    // A tool scripts may not call is not found, whatever is asked.
+    expect(await host.search("delete repo")).toEqual([]);
     expect(await host.describe("github_list_issues")).toEqual({ path: "github_list_issues", server: "github", tool: "list_issues", tier: 0, dataClass: "internal" });
     await expect(host.describe("github_delete_repo")).rejects.toThrow('no tool named "github_delete_repo" is available to scripts');
     await expect(host.describe("github_nothing")).rejects.toThrow("is available to scripts");
