@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { fakeToken } from "../src/adversarial/fixtures";
-import { runCodeTool, type CodeToolDeps } from "../src/code-tool/run";
+import { runCodeTool, type CodeToolDeps, type RunHost } from "../src/code-tool/run";
 import { codeToolOutputSchema } from "../src/contracts/code-tool";
-import type { ExecutionOutcome, ExecutionRequest, Executor, SandboxHost } from "../src/executor";
+import type { ExecutionOutcome, ExecutionRequest, Executor } from "../src/executor";
 import { RUN_LIMITS, SCRIPT_LIMITS } from "../src/limits";
 
-const EMPTY_HOST: SandboxHost = {
+/** A host whose run has read nothing, so output hygiene has nothing to withhold. */
+const EMPTY_HOST: RunHost = {
   callTool: async (path, args) => ({ path, args }),
   search: async () => [],
   describe: async () => ({}),
+  provenance: () => ({ dataClass: undefined, records: 0 }),
 };
 
 /** An executor that does not run the script: it does what the test tells it to. */
@@ -24,7 +26,7 @@ function scriptedExecutor(behaviour: (request: ExecutionRequest) => Promise<Exec
   };
 }
 
-function deps(executor: Executor, host: SandboxHost = EMPTY_HOST): CodeToolDeps {
+function deps(executor: Executor, host: RunHost = EMPTY_HOST): CodeToolDeps {
   let clock = 1_000;
   return { executor, hostFor: () => host, newRunId: () => "run-1", now: () => (clock += 25) };
 }
@@ -105,6 +107,7 @@ describe("the code tool's output contract (contract 2)", () => {
       result: { open: 3 },
       truncated: false,
       logs: ["two pages"],
+      untrusted: true,
       report: {
         runId: "run-1",
         scriptHash: output.report.scriptHash,
@@ -156,7 +159,7 @@ describe("the code tool's output contract (contract 2)", () => {
   });
 
   it("counts a call the host refused", async () => {
-    const host: SandboxHost = { ...EMPTY_HOST, callTool: async () => Promise.reject(new Error("refused")) };
+    const host: RunHost = { ...EMPTY_HOST, callTool: async () => Promise.reject(new Error("refused")) };
     const executor = scriptedExecutor(async (request) => {
       await request.host.callTool("github_delete_repo", {}).catch(() => undefined);
       return completed(null);
@@ -167,7 +170,7 @@ describe("the code tool's output contract (contract 2)", () => {
 
   it("reports an executor that throws as a sandbox fault, and runs nothing else", async () => {
     let upstreamCalls = 0;
-    const host: SandboxHost = { ...EMPTY_HOST, callTool: async () => ++upstreamCalls };
+    const host: RunHost = { ...EMPTY_HOST, callTool: async () => ++upstreamCalls };
     const executor = scriptedExecutor(async () => {
       throw new Error("isolate lost");
     });

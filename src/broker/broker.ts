@@ -55,6 +55,8 @@ export interface TaggedRead {
   readonly sensitive: boolean;
   /** Size of the result as JSON. */
   readonly bytes: number;
+  /** Records in the result: the length of a list, otherwise one (FR-36). */
+  readonly records: number;
 }
 
 /** Carries one allowed call to the wrapped tool. The MCP client, once it exists. */
@@ -81,6 +83,8 @@ export interface BrokerHost extends SandboxHost {
    * tag has to live with the run, outside the script's reach.
    */
   dataClass(): DataClass | undefined;
+  /** What the code tool needs for output hygiene (FR-36). */
+  provenance(): { readonly dataClass: DataClass | undefined; readonly records: number };
 }
 
 export interface BrokerDeps {
@@ -144,7 +148,8 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         throw new Error(`schema_invalid: the tool's result does not match its schema (${checked.problems.slice(0, 3).join("; ")})`);
       }
     }
-    reads.push({ path, server: record.server, tool: record.tool, dataClass: record.dataClass, sensitive: record.sensitive, bytes });
+    const records = Array.isArray(copy) ? copy.length : 1;
+    reads.push({ path, server: record.server, tool: record.tool, dataClass: record.dataClass, sensitive: record.sensitive, bytes, records });
     return copy;
   }
 
@@ -173,6 +178,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     reads,
     flags,
     securityError: () => ended,
+    provenance() {
+      return { dataClass: this.dataClass(), records: reads.reduce((sum, read) => sum + read.records, 0) };
+    },
     dataClass: () =>
       reads.length === 0 ? undefined : DATA_CLASSES[Math.max(...reads.map((read) => DATA_CLASSES.indexOf(read.dataClass)))],
 

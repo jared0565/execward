@@ -9,6 +9,7 @@
  */
 import { codeToolInputSchema, codeToolOutputSchema, type CodeToolOutput, type RunReport } from "../contracts/code-tool";
 import type { ErrorCode, ExecWardError } from "../contracts/errors";
+import { DATA_CLASSES, type DataClass } from "../contracts/policy";
 import type { ExecutionFailureKind, ExecutionLimits, Executor, SandboxHost } from "../executor";
 import { RUN_LIMITS } from "../limits";
 import { checkScript } from "../static-check/check";
@@ -18,7 +19,14 @@ import { checkScript } from "../static-check/check";
  * grounds reports it through `securityError`; the run then ends with that
  * error whatever the script did next (FR-41).
  */
-export type RunHost = SandboxHost & { securityError?(): ExecWardError | undefined };
+export type RunHost = SandboxHost & {
+  securityError?(): ExecWardError | undefined;
+  /**
+   * What the run has read: the highest data class and the number of records.
+   * A host that cannot say is treated as having read the highest class.
+   */
+  provenance?(): { readonly dataClass: DataClass | undefined; readonly records: number };
+};
 
 export interface CodeToolDeps {
   readonly executor: Executor;
@@ -28,6 +36,21 @@ export interface CodeToolDeps {
   /** Milliseconds; injected so tests are exact. */
   readonly now: () => number;
   readonly limits?: ExecutionLimits;
+  /**
+   * The highest data class a project's runs may return to the model (FR-36).
+   * Left out, it is `public`: the most cautious answer. Task 1.3.7 sets it per project.
+   */
+  readonly allowedDataClass?: (project: string) => DataClass;
+}
+
+/** What is returned in place of content that was withheld (FR-36). */
+export function maskNotice(read: DataClass, allowed: DataClass): { masked: true; notice: string } {
+  return {
+    masked: true,
+    notice:
+      `Withheld: this run read ${read} data, and this project may only return ${allowed} data. ` +
+      "The script ran; see the report for what it called. To get a result, read only data the project is allowed to return.",
+  };
 }
 
 /** Each way a run can fail maps onto exactly one public error code (contract 5). */
@@ -87,11 +110,12 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
   let scriptHash = EMPTY_SHA256;
 
   let assertionsPassed = 0;
+  let recordsRead = 0;
   const report = (errors: readonly ExecWardError[], assertionFailed = false): RunReport => ({
     runId,
     scriptHash,
     callsByTool: { ...callsByTool },
-    recordsRead: 0,
+    recordsRead,
     recordsWritten: 0,
     errors: [...errors],
     retries: 0,
@@ -127,8 +151,18 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
       limits,
       host: countingHost(host, callsByTool),
     });
-    const logs = outcome.logs.length > 0 ? { logs: [...outcome.logs] } : {};
     assertionsPassed = outcome.assertionsPassed ?? 0;
+
+    // FR-36. What the run read decides what may be returned. A host that
+    // cannot say what was read is treated as having read the highest class.
+    const provenance = host.provenance?.() ?? { dataClass: DATA_CLASSES[DATA_CLASSES.length - 1], records: 0 };
+    recordsRead = provenance.records;
+    const allowed = deps.allowedDataClass?.(input.data.project) ?? "public";
+    const read = provenance.dataClass;
+    const masked = read !== undefined && DATA_CLASSES.indexOf(read) > DATA_CLASSES.indexOf(allowed);
+    const hygiene = { untrusted: true as const, ...(read === undefined ? {} : { dataClass: read }), ...(masked ? { masked: true } : {}) };
+    // Logs are the script's to write, so they are withheld with the result.
+    const logs = outcome.logs.length > 0 && !masked ? { logs: [...outcome.logs] } : {};
     const securityError = host.securityError?.();
     if (securityError) {
       // A refused call ends the run. The script's own result or error is not
@@ -137,21 +171,31 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     } else if (outcome.status === "completed") {
       output = {
         status: "completed",
-        result: outcome.truncated ? truncationNotice(outcome.result, limits.maxResultBytes) : outcome.result,
-        truncated: outcome.truncated,
+        result:
+          masked && read !== undefined
+            ? maskNotice(read, allowed)
+            : outcome.truncated
+              ? truncationNotice(outcome.result, limits.maxResultBytes)
+              : outcome.result,
+        truncated: masked ? false : outcome.truncated,
         ...logs,
+        ...hygiene,
         report: report([]),
       };
     } else {
+      // A script chooses what it throws and asserts, so those words are withheld too.
+      const scriptWords = outcome.failure.kind === "script_error" || outcome.failure.kind === "assertion_failed";
       const error: ExecWardError = {
         code: FAILURE_CODES[outcome.failure.kind],
         message:
-          outcome.failure.kind === "assertion_failed"
-            ? withCondition(outcome.failure.message, input.data.script, outcome.failure.line)
-            : outcome.failure.message,
+          masked && scriptWords && read !== undefined
+            ? `the script failed; its message is withheld because the run read ${read} data`
+            : outcome.failure.kind === "assertion_failed"
+              ? withCondition(outcome.failure.message, input.data.script, outcome.failure.line)
+              : outcome.failure.message,
         ...(outcome.failure.line === undefined ? {} : { line: outcome.failure.line }),
       };
-      output = { status: "error", error, ...logs, report: report([error], outcome.failure.kind === "assertion_failed") };
+      output = { status: "error", error, ...logs, ...hygiene, report: report([error], outcome.failure.kind === "assertion_failed") };
     }
   } catch (cause) {
     // An executor must not throw; if one does, that is a sandbox fault. Nothing is run another way.
