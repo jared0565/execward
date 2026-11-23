@@ -7,8 +7,8 @@
  */
 import type { ExecutionFailureKind, ExecutionLimits, ExecutionOutcome } from "../executor";
 
-const MAX_LOG_LINES = 200;
-const TRUNCATED_LOGS_NOTICE = "[further log output was dropped]";
+export const MAX_LOG_LINES = 200;
+export const TRUNCATED_LOGS_NOTICE = "[further log output was dropped]";
 
 function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
@@ -43,8 +43,9 @@ export function capLogs(logs: unknown, maxBytes: number): string[] {
   return kept;
 }
 
-export function fault(message: string, logs: readonly string[] = []): ExecutionOutcome {
-  return { status: "failed", failure: { kind: "sandbox_fault", message }, logs };
+/** `detail` is for the audit log. The message is what a caller may see, so it holds no text from outside. */
+export function fault(message: string, logs: readonly string[] = [], detail?: string): ExecutionOutcome {
+  return { status: "failed", failure: { kind: "sandbox_fault", message, ...(detail === undefined ? {} : { detail: detail.slice(0, 2_000) }) }, logs };
 }
 
 export function failed(kind: ExecutionFailureKind, message: string, logs: readonly string[] = [], line?: number): ExecutionOutcome {
@@ -61,6 +62,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function interpretReport(report: unknown, limits: ExecutionLimits): ExecutionOutcome {
   if (!isRecord(report)) return fault("the sandbox returned no report");
+  // The runner lists the globals it could not hide. Any at all, or no list, and the allowed
+  // set is not what was promised: the run is a fault, whatever else the report says.
+  if (!Array.isArray(report.globalsLeft) || report.globalsLeft.length > 0) {
+    const names = Array.isArray(report.globalsLeft) ? report.globalsLeft.filter((name): name is string => typeof name === "string").slice(0, 20).join(", ") : "no list was given";
+    return fault("the sandbox could not hide every global it should, so the script was not run", [], names);
+  }
   const logs = capLogs(report.logs, limits.maxResultBytes);
   const passed =
     typeof report.assertionsPassed === "number" && Number.isInteger(report.assertionsPassed) && report.assertionsPassed >= 0

@@ -269,7 +269,7 @@ export function githubUpstream(deps: GithubConnectorDeps): Upstream {
       // The error's own text can hold the request. It is not passed on.
       throw new UpstreamToolError("GitHub could not be reached");
     }
-    if (response.status >= 300 && response.status < 400) throw new UpstreamToolError(`GitHub answered ${response.status}, a redirect, which is not followed`);
+    if (response.status >= 300 && response.status < 400) throw new UpstreamToolError(`GitHub answered ${response.status}, a redirect, which is not followed`, response.status);
 
     const body = await response.text();
     if (body.length > MAX_GITHUB_REPLY_BYTES) throw new UpstreamToolError("GitHub's reply is larger than the connector reads");
@@ -277,12 +277,12 @@ export function githubUpstream(deps: GithubConnectorDeps): Upstream {
     try {
       parsed = body === "" ? null : JSON.parse(body);
     } catch {
-      throw new UpstreamToolError(`GitHub answered ${response.status} with something that is not JSON`);
+      throw new UpstreamToolError(`GitHub answered ${response.status} with something that is not JSON`, response.status);
     }
     if (!response.ok) {
       const said = typeof parsed === "object" && parsed !== null && typeof (parsed as { message?: unknown }).message === "string" ? (parsed as { message: string }).message : "";
       const limited = response.headers.get("x-ratelimit-remaining") === "0" ? " (rate limit reached)" : "";
-      throw new UpstreamToolError(scrub(`GitHub answered ${response.status}${limited}: ${said.slice(0, 200)}`));
+      throw new UpstreamToolError(scrub(`GitHub answered ${response.status}${limited}: ${said.slice(0, 200)}`), response.status);
     }
     if (record.tool === "get_file_contents" && typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
       const file = parsed as { type?: unknown; path?: unknown; sha?: unknown; size?: unknown; encoding?: unknown; content?: unknown };

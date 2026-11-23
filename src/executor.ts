@@ -40,6 +40,11 @@ export interface SandboxHost {
   callTool(path: string, args: unknown): Promise<unknown>;
   search(query: string): Promise<unknown>;
   describe(path: string): Promise<unknown>;
+  /**
+   * Told when the run is over, however it ended. A host that has this sends nothing
+   * upstream afterwards, even for a call that was already being checked.
+   */
+  close?(): void;
 }
 
 export interface ExecutionRequest {
@@ -69,6 +74,8 @@ export interface ExecutionFailure {
   readonly message: string;
   /** Line in the script, when the sandbox can tell (FR-7). */
   readonly line?: number;
+  /** For the audit log only, never for the caller: what the platform said when the sandbox failed. */
+  readonly detail?: string;
 }
 
 export type ExecutionOutcome =

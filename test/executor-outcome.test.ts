@@ -19,7 +19,7 @@ describe("reading the sandbox's report as untrusted input", () => {
   });
 
   it("accepts only the two failure kinds a script can cause", () => {
-    const outcome = interpretReport({ status: "failed", kind: "quota_exceeded", message: "x", line: -4 }, LIMITS);
+    const outcome = interpretReport({ status: "failed", kind: "quota_exceeded", message: "x", line: -4, globalsLeft: [] }, LIMITS);
     expect(outcome).toEqual({ status: "failed", failure: { kind: "script_error", message: "x" }, logs: [] });
   });
 
@@ -34,7 +34,7 @@ describe("reading the sandbox's report as untrusted input", () => {
   });
 
   it("cuts an oversized result and marks it", () => {
-    const outcome = interpretReport({ status: "completed", resultJson: JSON.stringify("x".repeat(500)), logs: [] }, LIMITS);
+    const outcome = interpretReport({ status: "completed", resultJson: JSON.stringify("x".repeat(500)), logs: [], globalsLeft: [] }, LIMITS);
     expect(outcome).toMatchObject({ status: "completed", truncated: true });
   });
 });
@@ -54,5 +54,16 @@ describe("building the modules a Dynamic Worker is loaded with", () => {
     ["has an export", "export const a = 1;"],
   ])("refuses a script that %s", (_label, script) => {
     expect(buildSandboxModules(script).ok).toBe(false);
+  });
+
+  it("treats a global the runner could not hide, or a report with no list of them, as a fault (review finding F6)", () => {
+    const done = { status: "completed", resultJson: "1", logs: ["a line"] };
+    expect(interpretReport({ ...done, globalsLeft: [] }, LIMITS)).toMatchObject({ status: "completed", result: 1 });
+    const left = interpretReport({ ...done, globalsLeft: ["fetch"] }, LIMITS);
+    expect(left).toMatchObject({ status: "failed", failure: { kind: "sandbox_fault", detail: "fetch" }, logs: [] });
+    // The caller's message names nothing from the report.
+    expect(left.status === "failed" && left.failure.message).not.toContain("fetch");
+    expect(interpretReport(done, LIMITS)).toMatchObject({ status: "failed", failure: { kind: "sandbox_fault" } });
+    expect(interpretReport({ ...done, globalsLeft: "none" }, LIMITS)).toMatchObject({ status: "failed", failure: { kind: "sandbox_fault" } });
   });
 });

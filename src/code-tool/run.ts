@@ -176,6 +176,9 @@ function countingHost(host: SandboxHost, callsByTool: Record<string, number>, jo
         throw error;
       }
     },
+    close() {
+      host.close?.();
+    },
     async search(query) {
       const found = await host.search(query);
       runMeter?.discovery("search", found);
@@ -435,6 +438,9 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   };
 
   let output: CodeToolOutput;
+  // Kept for the audit log only: what a fault said, and a count withheld from a masked reply.
+  let faultDetail: string | undefined;
+  let assertionsWithheld: number | undefined;
   try {
     const host = deps.hostFor({ runId, project: input.data.project });
     runMeter = deps.meter?.start({ runId, project: input.data.project });
@@ -446,6 +452,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
       host: countingHost(host, callsByTool, journal, runMeter),
     });
     assertionsPassed = outcome.assertionsPassed ?? 0;
+    if (outcome.status === "failed") faultDetail = outcome.failure.detail;
 
     // FR-36. What the run read decides what may be returned. A host that
     // cannot say what was read is treated as having read the highest class.
@@ -455,6 +462,11 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     const read = provenance.dataClass;
     const masked = read !== undefined && DATA_CLASSES.indexOf(read) > DATA_CLASSES.indexOf(allowed);
     hidePaths = masked;
+    if (masked) {
+      // A script chooses how many assertions pass, so the count could carry what it read.
+      assertionsWithheld = assertionsPassed;
+      assertionsPassed = 0;
+    }
     const hygiene = { untrusted: true as const, ...(read === undefined ? {} : { dataClass: read }), ...(masked ? { masked: true } : {}) };
     // Logs are the script's to write, so they are withheld with the result.
     const logs = outcome.logs.length > 0 && !masked ? { logs: [...outcome.logs] } : {};
@@ -524,9 +536,10 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     } catch {
       recordsRead = 0;
     }
-    const error: ExecWardError = { code: "sandbox_fault", message: `the executor failed: ${cause instanceof Error ? cause.message : String(cause)}` };
+    // What the executor said goes to the audit log. The caller gets fixed words.
+    const error: ExecWardError = { code: "sandbox_fault", message: "the executor failed" };
     const reply: CodeToolOutput = { status: "error", error, report: report([error]) };
-    return (await finish(reply)) ? reply : unrecorded();
+    return (await finish(reply, { faultDetail: (cause instanceof Error ? cause.message : String(cause)).slice(0, 2_000) })) ? reply : unrecorded();
   } finally {
     await deps.admission?.release(admitted).catch(() => undefined);
   }
@@ -549,5 +562,6 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   });
   if (metered) meterRecords.set(output, metered);
   // The outcome is on record before anyone is told it.
-  return (await finish(output, { ...hygieneFacts, ...(gateChecks ? { releaseGate: gateChecks } : {}) })) ? output : unrecorded();
+  const kept = { ...(faultDetail === undefined ? {} : { faultDetail }), ...(assertionsWithheld === undefined ? {} : { assertionsPassedWithheld: assertionsWithheld }) };
+  return (await finish(output, { ...hygieneFacts, ...kept, ...(gateChecks ? { releaseGate: gateChecks } : {}) })) ? output : unrecorded();
 }

@@ -144,16 +144,18 @@ function check(value: unknown, schema: JsonSchema, at: string, depth: number, ou
   }
 
   if (Array.isArray(schema.anyOf)) {
-    // The value must satisfy at least one branch; that branch's URLs and paths are the ones collected.
+    // The value must satisfy at least one branch. URLs and paths are collected from every
+    // branch it satisfies, not only the first: if any branch says a value is a URL, it is
+    // checked as one, whatever order the branches are listed in.
     const passing = (schema.anyOf as JsonSchema[])
       .map((branch) => {
         const attempt: Collected = { problems: [], located: [], unlistedFields: out.unlistedFields };
         check(value, branch, at, depth + 1, attempt);
         return attempt;
       })
-      .find((attempt) => attempt.problems.length === 0);
-    if (!passing) out.problems.push(`${at}: matches none of the allowed shapes`);
-    else out.located.push(...passing.located);
+      .filter((attempt) => attempt.problems.length === 0);
+    if (passing.length === 0) out.problems.push(`${at}: matches none of the allowed shapes`);
+    else for (const attempt of passing) out.located.push(...attempt.located);
   }
 
   if (schema.type !== undefined) {

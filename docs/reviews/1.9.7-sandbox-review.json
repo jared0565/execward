@@ -1,0 +1,150 @@
+{
+  "model": "gpt-6.2-astra",
+  "status": "completed",
+  "files": [
+    "src/executor/cloudflare-workers.d.ts",
+    "src/executor/dynamic-worker.ts",
+    "src/executor/outcome.ts",
+    "src/executor/sandbox-modules.ts",
+    "src/static-check/check.ts",
+    "src/broker/allowlists.ts",
+    "src/broker/broker.ts",
+    "src/broker/exposure.ts",
+    "src/broker/json-schema.ts",
+    "src/broker/policy-store.ts",
+    "src/broker/quotas.ts",
+    "src/code-tool/run.ts",
+    "src/code-tool/present.ts",
+    "src/code-tool/attempts.ts",
+    "docs/decisions/1.2.2-limits-on-cloudflare.md"
+  ],
+  "inputTokens": 30065,
+  "outputTokens": 3030,
+  "costUsd": 0.36172,
+  "review": {
+    "summary": "I found no demonstrated escape from the Cloudflare isolate and no ordinary call path that lets an unclassified tool reach upstream. I would not sign off on the stronger claims that a timeout or denial stops pending work, that logs are bounded before they reach the host, or that all data handed to a script is accounted for. The most immediate credential issue is simpler: a script refused for containing a secret is still written to the audit log.",
+    "findings": [
+      {
+        "id": "F1",
+        "severity": "high",
+        "threat": 14,
+        "file": "src/code-tool/run.ts",
+        "where": "runOnce → refused, after checkScript",
+        "title": "Refusing a credential-bearing script still sends its source to the audit log",
+        "detail": "The secret detector keeps the matched text out of its diagnostic, but runOnce passes rawScript to refused, which includes the source in run_refused.body.script. This moves a credential from a rejected request into an append-only logging system. Owner-only access does not undo that additional copy.",
+        "proof": "With a synthetic secret-pattern fixture and a recording AuditLog, inspect the event passed to audit.record. The refusal message omits the fixture; body.script contains it if it is within the retained prefix. No executor or live credential is needed.",
+        "fix": "For a secret finding, record the hash, byte count, rule and line, not source text. Prefer omitting source for all static-check refusals so parser diagnostics and newly added rules cannot reintroduce the same leak. Check existing audit retention and credential-rotation procedures.",
+        "confidence": "high"
+      },
+      {
+        "id": "F2",
+        "severity": "high",
+        "threat": 10,
+        "file": "src/broker/broker.ts",
+        "where": "brokerHost.callTool: guard, checkQuotas and deps.upstream; src/executor/dynamic-worker.ts: HostBridge.close",
+        "title": "A call can start upstream after its run has already been denied or timed out",
+        "detail": "guard tests ended only on entry. Several awaits separate that check from upstream dispatch. A sibling call can end the run while the first is waiting. Likewise, closing HostBridge prevents new entries, but does not revoke an admitted call still waiting inside the broker. This is not just failure to cancel an already-sent request: a new upstream request can be dispatched after termination. The audit report can also be finalized with that call still marked pending.",
+        "proof": "Use a deferred quota-store response and an upstream spy. Hold an otherwise allowed call before dispatch, end the run, then release the deferred response. The required invariant is zero new upstream dispatches; there is no live-state check at that point. Test broker denial and executor timeout separately.",
+        "fix": "Give the bridge and broker a shared host-owned run lifecycle. Revoke it on every terminal path and synchronously recheck it immediately before dispatch. Abort already-dispatched operations where supported, and distinguish cancelled, pending and completed calls in the final audit record.",
+        "confidence": "high"
+      },
+      {
+        "id": "F3",
+        "severity": "high",
+        "threat": 11,
+        "file": "src/executor/sandbox-modules.ts",
+        "where": "RUNNER_SOURCE console.log and result serialization; src/executor/outcome.ts: capLogs, cutToBytes and interpretReport",
+        "title": "Output limits are applied after the large allocation and RPC transfer",
+        "detail": "The runner retains every formatted log line and serializes the complete final value. The report crosses RPC before the host caps it. The host then allocates full UTF-8 encodings to measure strings, even when it only needs a short prefix. The retained reply may be small while sandbox memory, transport and host memory costs are large. A platform RPC limit may reduce the worst case, but it is not the configured output budget.",
+        "proof": "Use a recording entrypoint with a deliberately small output budget and ordinary fixture strings just above it. Compare the size of the report before interpretReport with the size returned afterward. No resource-exhaustion test is necessary to establish the ordering.",
+        "fix": "Bound log count and bytes as entries are produced. Use a bounded serializer or a transport with host-enforced message limits for results. Keep the host-side validation, but make its sizing and truncation operate on bounded chunks and include the truncation notice in the budget.",
+        "confidence": "high"
+      },
+      {
+        "id": "F4",
+        "severity": "high",
+        "threat": 2,
+        "file": "src/broker/broker.ts",
+        "where": "brokerHost.callTool upstream catch, accept and checkDataFlow",
+        "title": "Upstream error text reaches the script without the provenance of a successful read",
+        "detail": "The broker gives the script up to 500 characters of an upstream exception, but records sensitivity and data class only in accept, on success. An error containing repository content, a request fragment or a connector diagnostic is therefore a data return that checkDataFlow and output masking cannot see. The pre-call class cap still applies to the declared tool; this is not evidence that an above-cap tool is callable.",
+        "proof": "Have a mock sensitive tool throw an error containing a harmless marker. The caller receives the marker while broker.reads remains empty and provenance reports no data class. Whether a real credential could be exposed depends on connector error handling, which is not supplied.",
+        "fix": "Return a host-owned error code and safe diagnostic, not raw upstream text or its cause. If any upstream-derived diagnostic must be delivered, classify the delivery before handing it to the script and apply the same outbound restrictions as for a successful read.",
+        "confidence": "high"
+      },
+      {
+        "id": "F5",
+        "severity": "medium",
+        "threat": 2,
+        "file": "src/broker/json-schema.ts",
+        "where": "check(anyOf); src/broker/broker.ts: callTool located-value loop and checkDataFlow",
+        "title": "Destination enforcement depends on which matching schema branch is listed first",
+        "detail": "For anyOf, only the first successful branch contributes URL and path locations. If overlapping branches describe the same string with different security annotations, the value can validate without being checked against its allowlist. Separately, checkDataFlow treats the presence of any checked URL as evidence of an approved destination; that does not establish that the connector actually sends to that field. Real impact requires a registered schema and connector with the relevant semantics.",
+        "proof": "As a validator unit test, compare located for a benign URL under two overlapping string branches, one plain and one URI-formatted. Swap the branches. Validation succeeds in both orders but the destination inventory differs.",
+        "fix": "Bind destination and path policy to explicit connector field paths, not merely successful schema branches. Reject ambiguous definitions at registration. Verify the actual normalized destination at dispatch, including redirect policy where applicable.",
+        "confidence": "high"
+      },
+      {
+        "id": "F6",
+        "severity": "medium",
+        "threat": 4,
+        "file": "src/executor/sandbox-modules.ts",
+        "where": "RUNNER_SOURCE stripGlobals and Code.run; src/executor/outcome.ts: interpretReport",
+        "title": "The runner detects incomplete global stripping but runs the script anyway",
+        "detail": "stripGlobals returns a list of names it could not hide. Code.run executes the script regardless, and interpretReport ignores globalsLeft. Also, the final check reads the shadowing property on globalThis; that does not verify that a failed prototype deletion removed the original property from the prototype. This breaks the claimed global allowlist if the runtime surface changes. It does not by itself establish network access or host escape.",
+        "proof": "A runner fixture with a non-removable, disallowed test property should fail before the script is invoked. In the supplied control flow, a nonempty left list changes only a report field. The deployed tests are evidence for the tested runtime surface, not this failure path.",
+        "fix": "Verify the relevant own and inherited descriptors before invoking user code. Fail initialization on a residual forbidden capability or unverifiable state. Keep platform confinement independent of global stripping.",
+        "confidence": "high"
+      },
+      {
+        "id": "F7",
+        "severity": "medium",
+        "threat": 2,
+        "file": "src/code-tool/run.ts",
+        "where": "runOnce outer catch; src/executor/dynamic-worker.ts: execute catch",
+        "title": "Unexpected fault messages have a route around output hygiene",
+        "detail": "The outer catch interpolates cause.message into a public sandbox_fault and returns it without the release gate. Hiding tool paths there does not hide the exception text. The executor also embeds unexpected platform exception text in a fault, while runOnce masks only script_error and assertion_failed messages as script-controlled. These paths trust the origin of a string based on how an exception arrived, not what it contains.",
+        "proof": "A fake executor that throws an Error containing a harmless marker demonstrates the outer path: the marker appears in the returned error without a gate verdict. Whether the production RPC runtime carries script-derived or confidential detail in such exceptions needs platform-specific verification.",
+        "fix": "Use fixed public fault messages with a correlation ID. Route every outward reply through one final hygiene step. Keep diagnostic causes only in a separately protected and redacted channel.",
+        "confidence": "high"
+      },
+      {
+        "id": "F8",
+        "severity": "medium",
+        "threat": 2,
+        "file": "src/code-tool/run.ts",
+        "where": "runOnce report construction and masked-output branch",
+        "title": "Withheld results still expose script-controlled report metadata",
+        "detail": "Masking suppresses result content, logs and some error text, but still publishes assertionsPassed and call counts. Those can depend on the withheld value. A release gate that checks the result, logs and error message does not cover the report. This matters when masking actually activates; correctly enforced pre-read caps should normally prevent the script from receiving above-cap data in the first place.",
+        "proof": "Use a stub host reporting above-cap provenance and two otherwise identical completed outcomes with different assertion counts. Both replies have the same mask notice, but they remain distinguishable in report.assertions.passed.",
+        "fix": "Return a fixed minimal public report for withheld runs. Keep exact counters, paths, line numbers and timings in the authorized audit channel. Validate the entire public envelope, not just its content fields.",
+        "confidence": "high"
+      },
+      {
+        "id": "F9",
+        "severity": "medium",
+        "threat": 11,
+        "file": "src/broker/broker.ts",
+        "where": "brokerHost.search and searchWords; src/executor/dynamic-worker.ts: HostBridge.search",
+        "title": "Discovery charges one host call for an unbounded amount of host-side search work",
+        "detail": "The bridge checks that a query is text, not how large it is. In the host, searchWords lowercases and tokenizes the entire string, then search scores every distinct word against each candidate tool and its documentation. Script-source limits do not bound runtime string sizes, and sandbox CPU limits do not budget this host work.",
+        "proof": "With a mock registry, measure words scored per host call for two modest synthetic queries of different lengths. Both consume one call; the implementation has no byte limit, term limit or scoring-work budget.",
+        "fix": "Enforce a small query-size limit at the RPC ingress, cap distinct terms and candidates, and pre-index bounded documentation. Apply ingress size limits to discovery paths and tool arguments as well, before audit serialization or policy work.",
+        "confidence": "high"
+      }
+    ],
+    "checked_and_sound": [
+      "For ordinary callTool dispatch, a missing record, failed policy lookup, direct-only rule, nonzero tier, missing definition or definition lookup failure stops the call before upstream. I found no property-name trick that turns a missing policy entry into authorization.",
+      "d1PolicyStore.get binds the lookup key and checks that the parsed row describes the same tool. The in-memory policy store uses Map; call counts in runOnce use null-prototype objects; schema property lookups use Object.hasOwn.",
+      "The loader request explicitly sets globalOutbound to null, supplies an empty environment and disables Node compatibility. The executor has no fallback that evaluates a failed script in the host.",
+      "buildSandboxModules parses source before wrapping it and rejects top-level import/export declarations. A computed name getting past the static checker is not, on its own, evidence of code execution in the host.",
+      "presentForModel escapes tag delimiters throughout the JSON reply, including errors and logs. This protects the textual block boundary; it does not establish that a model will ignore instructions inside the block."
+    ],
+    "not_reviewable_from_source": [
+      "Cloudflare's effective RPC surface, marshalling of non-JSON arguments and capabilities, transport size limits, and isolation guarantees for the exact deployed build. The deployment note explicitly distinguishes the last deployed Worker from the commit under test.",
+      "Production service wiring: trusted binding of project and provider route to the authenticated caller, mandatory use of the class cap and durable quotas, and consistency between the broker's cap and the output cap.",
+      "Definition pin computation and verification, connector credential handling, redirect and path-decoding semantics, actual registered schemas, and whether discovery documentation is covered by the same pin as dispatch.",
+      "Audit-sink redaction, access isolation and retention; releaseGate implementation; deployment dependencies and process confinement; owner authentication and local-listener exposure."
+    ]
+  }
+}
