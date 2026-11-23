@@ -16,6 +16,11 @@ on:
 permissions:
   contents: read
 
+# One run at a time: every run uses the same test database and bucket.
+concurrency:
+  group: deployed-test-worker
+  cancel-in-progress: false
+
 jobs:
   deployed:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository

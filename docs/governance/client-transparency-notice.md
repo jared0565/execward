@@ -60,9 +60,12 @@ Notification emails about this system contain only a link. They never contain yo
 Each provider keeps what it receives for its own period, set out in its terms.
 [the owner to add: each provider's retention period, checked on the day this is sent]
 
+Backup copies of these records are kept for 7 days and then deleted.
+
 You can ask me to delete the records of work done for you at any time. The content is
-removed straight away; a content-free outline remains for up to 90 days, because the
-records are linked together so that tampering can be detected.
+removed straight away from the live records; it remains in backup copies for up to 7
+days. A content-free outline remains for up to 90 days, because the records are linked
+together so that tampering can be detected.
 
 ### What is checked by a person
 
@@ -91,5 +94,5 @@ You can ask me not to use AI tools on your work, or to limit which data they may
 - **The "outline remains for 90 days" sentence** is a real limit of the design, stated
   in docs/decisions/1.4.4-retention.md. If a client needs faster complete deletion, that
   is a design change, not a wording change.
-- **Backups** are not mentioned because none exist yet (task 1.4.5). When they do, this
-  notice must say how long they are kept.
+- **Backups** are kept 7 days (docs/decisions/1.4.5-backups.md). The notice says so. If
+  the keep time changes, change the notice. The daily schedule is not running yet.
