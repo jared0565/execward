@@ -14,6 +14,7 @@ import type { ExecutionFailureKind, ExecutionLimits, Executor, SandboxHost } fro
 import { RUN_LIMITS, SCRIPT_LIMITS } from "../limits";
 import { checkScript } from "../static-check/check";
 import type { AuditLog } from "../audit/log";
+import type { MeterFactory, RunMeter } from "../meter/meter";
 import type { AttemptGate } from "./attempts";
 import { releaseGate, type GateCheck } from "./release-gate";
 
@@ -68,6 +69,8 @@ export interface CodeToolDeps {
    * runs in a row and refuses the next one once the task is closed.
    */
   readonly attempts?: AttemptGate;
+  /** Token metering (FR-19). Separate from the audit log, and never able to fail a run. */
+  readonly meter?: MeterFactory;
   /**
    * What this run may handle, and through which provider route its reply
    * leaves (FR-38). Takes the place of `allowedDataClass` when given. If it
@@ -124,7 +127,7 @@ function byteLength(value: unknown): number {
   }
 }
 
-function countingHost(host: SandboxHost, callsByTool: Record<string, number>, journal: CallRecord[]): SandboxHost {
+function countingHost(host: SandboxHost, callsByTool: Record<string, number>, journal: CallRecord[], runMeter?: RunMeter): SandboxHost {
   return {
     async callTool(path, args) {
       // Counted when asked, not when answered: a refused or failed call is still a call.
@@ -140,6 +143,7 @@ function countingHost(host: SandboxHost, callsByTool: Record<string, number>, jo
       try {
         const result = await host.callTool(path, args);
         entry.outcome = "ok";
+        runMeter?.toolResult(path, result);
         entry.resultBytes = byteLength(result);
         return result;
       } catch (error) {
@@ -149,8 +153,16 @@ function countingHost(host: SandboxHost, callsByTool: Record<string, number>, jo
         throw error;
       }
     },
-    search: (query) => host.search(query),
-    describe: (path) => host.describe(path),
+    async search(query) {
+      const found = await host.search(query);
+      runMeter?.discovery("search", found);
+      return found;
+    },
+    async describe(path) {
+      const docs = await host.describe(path);
+      runMeter?.discovery("describe", docs);
+      return docs;
+    },
   };
 }
 
@@ -224,6 +236,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     return shown;
   };
   let runHost: RunHost | undefined;
+  let runMeter: RunMeter | undefined;
   // Set by the release gate. Until then nothing has been checked, so nothing is claimed.
   let verification: RunReport["verification"] = "not_applicable";
   let gateChecks: readonly GateCheck[] | undefined;
@@ -371,12 +384,13 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   let output: CodeToolOutput;
   try {
     const host = deps.hostFor({ runId, project: input.data.project });
+    runMeter = deps.meter?.start({ runId, project: input.data.project });
     runHost = host;
     const outcome = await deps.executor.execute({
       runId,
       script: input.data.script,
       limits,
-      host: countingHost(host, callsByTool, journal),
+      host: countingHost(host, callsByTool, journal, runMeter),
     });
     assertionsPassed = outcome.assertionsPassed ?? 0;
 
@@ -473,6 +487,11 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     output.status === "completed" || output.status === "error"
       ? { ...(output.dataClass === undefined ? {} : { dataClass: output.dataClass }), masked: output.masked === true }
       : {};
+  // FR-19: the meter counts what was written and what is sent back. It changes neither.
+  await runMeter?.finish({
+    script: input.data.script,
+    returned: output.status === "completed" ? output.result : output.status === "error" ? output.error.message : "",
+  });
   // The outcome is on record before anyone is told it.
   return (await finish(output, { ...hygieneFacts, ...(gateChecks ? { releaseGate: gateChecks } : {}) })) ? output : unrecorded();
 }
