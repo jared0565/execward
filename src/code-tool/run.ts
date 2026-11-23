@@ -62,6 +62,12 @@ export interface CodeToolDeps {
    */
   readonly allowedDataClass?: (project: string) => DataClass;
   /**
+   * What this run may handle, and through which provider route its reply
+   * leaves (FR-38). Takes the place of `allowedDataClass` when given. If it
+   * throws, the run is refused.
+   */
+  readonly exposure?: (project: string) => Promise<{ readonly allowed: DataClass; readonly provider: string }>;
+  /**
    * Run admission: per-project quotas and spend caps (FR-27). A run is admitted
    * before it starts and released when it ends, however it ends.
    */
@@ -228,13 +234,33 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     if (over) return refused(over, input.data.script, input.data.project);
   }
 
+  // FR-38: settle what the run may handle before anything runs.
+  let exposed: { readonly allowed: DataClass; readonly provider: string } | undefined;
+  if (deps.exposure) {
+    try {
+      exposed = await deps.exposure(input.data.project);
+    } catch {
+      await deps.admission?.release(admitted).catch(() => undefined);
+      return refused({ code: "policy_denied", message: "the project's data class could not be read, so the run was not started" }, input.data.script, input.data.project);
+    }
+  }
+
   // FR-8: the run is on record before it starts. No record, no run.
   try {
     await deps.audit.record({
       kind: "run_started",
       runId,
       project: input.data.project,
-      body: { scriptHash, script: input.data.script, executor: deps.executor.name, limits, ...(input.data.intent === undefined ? {} : { intent: input.data.intent }) },
+      body: {
+        scriptHash,
+        script: input.data.script,
+        executor: deps.executor.name,
+        limits,
+        // FR-38: the provider is recorded for every run. "unknown" when nothing established it.
+        provider: exposed?.provider ?? "unknown",
+        ...(exposed ? { allowedDataClass: exposed.allowed } : {}),
+        ...(input.data.intent === undefined ? {} : { intent: input.data.intent }),
+      },
     });
   } catch {
     await deps.admission?.release(admitted).catch(() => undefined);
@@ -287,7 +313,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     // cannot say what was read is treated as having read the highest class.
     const provenance = host.provenance?.() ?? { dataClass: DATA_CLASSES[DATA_CLASSES.length - 1], records: 0 };
     recordsRead = provenance.records;
-    const allowed = deps.allowedDataClass?.(input.data.project) ?? "public";
+    const allowed = exposed?.allowed ?? deps.allowedDataClass?.(input.data.project) ?? "public";
     const read = provenance.dataClass;
     const masked = read !== undefined && DATA_CLASSES.indexOf(read) > DATA_CLASSES.indexOf(allowed);
     const hygiene = { untrusted: true as const, ...(read === undefined ? {} : { dataClass: read }), ...(masked ? { masked: true } : {}) };
