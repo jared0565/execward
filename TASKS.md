@@ -144,8 +144,8 @@ Exit: Gate 1. Security first: every P0 security requirement in place, the advers
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 1.8.1 | Add metering at off, summary and detailed | FR-19; NFR: metering overhead | 1.4.1 | Off runs no tokenizer; nothing is added to model context; every figure is labelled estimated | P0 | Not started |
-| 1.8.2 | Compute the meter's measures | Token metering table | 1.8.1 | Script, returned, kept-out and definitions-not-loaded tokens and the estimated saving are unit-tested | — | Not started |
+| 1.8.1 | Add metering at off, summary and detailed | FR-19; NFR: metering overhead | 1.4.1 | Off runs no tokenizer; nothing is added to model context; every figure is labelled estimated. 2026-11-23: done (`src/meter/meter.ts`). Records go to a sink; only an in-memory one exists, and the stats file and report are 2.3. See docs/decisions/1.8-token-meter.md | P0 | Done |
+| 1.8.2 | Compute the meter's measures | Token metering table | 1.8.1 | Script, returned, kept-out and definitions-not-loaded tokens and the estimated saving are unit-tested. 2026-11-23: done. No model family's real tokenizer is bundled: every count uses one rough rule (1 token per 4 bytes), named in each record | — | Done |
 
 ### 1.9 In-app adapter and Gate 1
 

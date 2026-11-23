@@ -15,6 +15,7 @@ import {
 import { memoryPolicyStore } from "../src/broker/policy-store";
 import { memoryQuotaStore } from "../src/broker/quotas";
 import { attemptGate } from "../src/code-tool/attempts";
+import { memoryMeterSink, meter } from "../src/meter/meter";
 import type { DataClass } from "../src/contracts/policy";
 import type { Executor } from "../src/executor";
 import { codeToolService, type CodeToolServiceDeps } from "../src/service";
@@ -190,6 +191,7 @@ describe("the code tool with every control in place", () => {
       upstream: async ({ record: called }) => (upstreamCalls.push(called.tool), { from: called.tool, text: "CANARY-client-file" }),
       definitionFor: async () => ({ description: "t", inputSchema: { type: "object", additionalProperties: true } }),
       docsFor: async () => undefined,
+      meter: meter({ level: "off", sink: memoryMeterSink() }),
       now: () => 1_800_000_000_000,
       newRunId: () => `run-${++run}`,
       ...overrides,

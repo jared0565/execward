@@ -13,6 +13,7 @@ import { exposureFor, type Exposure, type Gate, type ProjectStore, CLIENT_DATA_G
 import type { PolicyStore } from "./broker/policy-store";
 import { admitRun, releaseRun, type QuotaStore } from "./broker/quotas";
 import type { AttemptGate } from "./code-tool/attempts";
+import type { MeterFactory } from "./meter/meter";
 import { runCodeTool } from "./code-tool/run";
 import type { CodeToolOutput } from "./contracts/code-tool";
 import type { PolicyRecord } from "./contracts/policy";
@@ -28,6 +29,8 @@ export interface CodeToolServiceDeps {
   readonly definitionFor: (record: PolicyRecord) => Promise<ToolDefinition | undefined>;
   /** Typed docs for `describe()`. Both this and `definitionFor` come from the registry. */
   readonly docsFor: (path: string) => Promise<{ readonly typing: string } | undefined>;
+  /** Token metering. Required, so that "off" is a choice someone made and not an omission. */
+  readonly meter: MeterFactory;
   readonly now: () => number;
   readonly newRunId: () => string;
   /** Only tests pass this. Production uses `CLIENT_DATA_GATE`. */
@@ -71,6 +74,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       now: deps.now,
       newRunId: deps.newRunId,
       attempts: caller.attempts,
+      meter: deps.meter,
       exposure,
       admission: {
         admit: (run) => admitRun(quotaContext(run.project), run.runId, run.wallClockMs),
