@@ -16,6 +16,7 @@ import { CODE_TOOL_DESCRIPTION, CODE_TOOL_NAME } from "../code-tool/description"
 import { presentForModel } from "../code-tool/present";
 import type { RunReport } from "../contracts/code-tool";
 import { ModelOutputError, type Message, type ModelProvider, type ModelTurn, type ToolBackend, type ToolDefinition } from "../eval/types";
+import type { AppMode } from "../console/control";
 import type { CodeToolService } from "../service";
 import { reconcile, type Reconciliation } from "./reconcile";
 
@@ -45,7 +46,7 @@ export interface AppDeps {
   /** The wrapped tools, for direct calls when Code Mode is off. */
   readonly direct: ToolBackend;
   /** The global switch (FR-16). Read every turn, so a change takes effect at the next one. */
-  readonly codeMode: () => boolean;
+  readonly codeMode: () => boolean | AppMode | Promise<boolean | AppMode>;
   readonly project: string;
   /** How this app reaches its model provider: a key of `PROVIDER_ROUTES`. */
   readonly providerRoute: unknown;
@@ -54,7 +55,7 @@ export interface AppDeps {
 
 export interface AppResult {
   readonly answer: string;
-  readonly stopped: "answered" | "turn_limit" | "model_error";
+  readonly stopped: "answered" | "turn_limit" | "model_error" | "stopped";
   /** Why the model stopped, for `model_error`. Never model output. */
   readonly detail?: string;
   readonly turns: number;
@@ -107,7 +108,15 @@ export async function runAppTask(request: string, deps: AppDeps): Promise<AppRes
   });
 
   while (turns < maxTurns) {
-    const codeModeOn = deps.codeMode();
+    let mode: boolean | AppMode;
+    try {
+      mode = await deps.codeMode();
+    } catch {
+      mode = "stopped";
+    }
+    // The kill switch or a paused project: the model is not asked for another turn.
+    if (mode === "stopped") return finish("stopped", "");
+    const codeModeOn = mode === true || mode === "on";
     // FR-16: on, the model has the one tool. Off, it has the wrapped tools and no `code`.
     const tools = codeModeOn ? [CODE_TOOL_DEFINITION] : deps.direct.definitions;
     let turn: ModelTurn;

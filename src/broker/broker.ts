@@ -102,6 +102,12 @@ export interface BrokerDeps {
   /** Typed docs for one tool path, for `describe()` (FR-3). */
   readonly docsFor?: (path: string) => Promise<{ readonly typing: string } | undefined>;
   /**
+   * The owner's switches, asked before every call (FR-17). Returns why the
+   * call must not go ahead: Code Mode off, the kill switch, a paused project
+   * or a blocked tool. A run ends at the first such answer.
+   */
+  readonly control?: (path: string) => Promise<ExecWardError | undefined>;
+  /**
    * The highest data class this run may handle (FR-32, FR-38). A tool above
    * it is hidden from search and describe and refused when called. If it is a
    * promise that fails, every call is refused. Left out, there is no cap, so
@@ -172,7 +178,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
   }
 
   /** Ends the run on a security code (FR-41). Every later call is refused too. */
-  function end(code: "policy_denied" | "quota_exceeded" | "circuit_open" | "definition_changed", path: string, reason: string): never {
+  function end(code: "policy_denied" | "quota_exceeded" | "circuit_open" | "definition_changed" | "code_mode_off", path: string, reason: string): never {
     denials.push({ path, reason });
     // The first refusal is the one reported; the message names the tool, never the arguments.
     // A path with no policy record is whatever the script typed, so it is not
@@ -226,6 +232,18 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     if (ended) deny(path, "the run was ended by an earlier refusal");
   }
 
+  /** FR-17: a switch thrown mid-run ends the script at its next call. Nothing carries on. */
+  async function switches(path: string): Promise<void> {
+    if (!deps.control) return;
+    let stopped: ExecWardError | undefined;
+    try {
+      stopped = await deps.control(path);
+    } catch {
+      stopped = { code: "code_mode_off", message: "the control state is unavailable, so nothing is run" };
+    }
+    if (stopped) end(stopped.code === "code_mode_off" ? "code_mode_off" : "policy_denied", path, stopped.message);
+  }
+
   async function lookup(path: string): Promise<PolicyRecord | undefined> {
     try {
       const record = await deps.store.get(path);
@@ -250,6 +268,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
 
     async callTool(path, args) {
       guard(path);
+      await switches(path);
       const record = await lookup(path);
       const policy = effectivePolicy(record);
       if (!policy.classified || record === undefined) deny(path, "the tool has no policy record");
@@ -309,6 +328,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
 
     async search(query) {
       guard("search");
+      await switches("search");
       let records: readonly PolicyRecord[];
       try {
         records = await deps.store.list();
@@ -327,6 +347,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
 
     async describe(path) {
       guard(path);
+      await switches(path);
       const record = await lookup(path);
       if (record === undefined || !scriptMayCall(record) || record.tier !== 0 || !withinCap(record, await dataClassCap(path))) {
         // Not a security event: asking about a name is not an attempt to use it.

@@ -71,6 +71,8 @@ export interface CodeToolDeps {
   readonly attempts?: AttemptGate;
   /** Token metering (FR-19). Separate from the audit log, and never able to fail a run. */
   readonly meter?: MeterFactory;
+  /** The owner's switches (FR-16, FR-27): why a run for this project may not start, if it may not. */
+  readonly control?: (project: string) => Promise<ExecWardError | undefined>;
   /**
    * What this run may handle, and through which provider route its reply
    * leaves (FR-38). Takes the place of `allowedDataClass` when given. If it
@@ -166,8 +168,14 @@ function countingHost(host: SandboxHost, callsByTool: Record<string, number>, jo
   };
 }
 
+/** The sentence FR-17 asks for. Only read-only tools exist, so the list is always empty for now. */
+export function sideEffectsMade(sideEffects: readonly { readonly tool: string; readonly summary: string }[]): string {
+  if (sideEffects.length === 0) return "No side-effecting calls had been made.";
+  return `Side-effecting calls already made: ${sideEffects.map((effect) => `${effect.tool} (${effect.summary})`).join("; ")}.`;
+}
+
 /** Codes that end a run. The run's own error already reports them. */
-const RUN_ENDING_CODES: ReadonlySet<string> = new Set(["policy_denied", "quota_exceeded", "circuit_open", "definition_changed"]);
+const RUN_ENDING_CODES: ReadonlySet<string> = new Set(["policy_denied", "quota_exceeded", "circuit_open", "definition_changed", "code_mode_off"]);
 
 /** Most failed calls one report lists. */
 export const MAX_REPORTED_CALL_ERRORS = 20;
@@ -302,6 +310,17 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   const closed = deps.attempts?.blocked();
   if (closed) return refused(closed, input.data.script, input.data.project);
 
+  // FR-16, FR-27: with Code Mode off, the kill switch set or the project paused, nothing starts.
+  if (deps.control) {
+    let stopped: ExecWardError | undefined;
+    try {
+      stopped = await deps.control(input.data.project);
+    } catch {
+      stopped = { code: "code_mode_off", message: "the control state is unavailable, so nothing is run" };
+    }
+    if (stopped) return refused(stopped, input.data.script, input.data.project);
+  }
+
   const admitted = { runId, project: input.data.project };
   if (deps.admission) {
     let over: ExecWardError | undefined;
@@ -409,7 +428,9 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     if (securityError) {
       // A refused call ends the run. The script's own result or error is not
       // returned: a script must not learn more by catching the refusal.
-      output = { status: "error", error: securityError, report: report([securityError]) };
+      // FR-17: a run ended by a switch says which side-effecting calls it had already made.
+      const ending: ExecWardError = securityError.code === "code_mode_off" ? { ...securityError, message: `${securityError.message}. ${sideEffectsMade([])}` } : securityError;
+      output = { status: "error", error: ending, report: report([ending]) };
     } else if (outcome.status === "completed") {
       output = {
         status: "completed",
