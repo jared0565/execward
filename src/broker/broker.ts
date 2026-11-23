@@ -14,8 +14,8 @@
  * if the script caught the error. That stops a script probing the policy.
  */
 import type { ExecWardError } from "../contracts/errors";
-import type { PolicyRecord } from "../contracts/policy";
-import { scriptMayCall } from "../contracts/policy";
+import { DATA_CLASSES, scriptMayCall, type DataClass, type PolicyRecord } from "../contracts/policy";
+import { CALL_LIMITS } from "../limits";
 import type { SandboxHost } from "../executor";
 import { pathAllowed, urlAllowed } from "./allowlists";
 import { checkAgainstSchema } from "./json-schema";
@@ -26,6 +26,27 @@ export interface ToolDefinition {
   readonly description: string;
   /** JSON Schema for the tool's arguments. */
   readonly inputSchema: unknown;
+  /** JSON Schema for the tool's result, when the tool declares one. */
+  readonly outputSchema?: unknown;
+}
+
+/**
+ * Thrown by an upstream when the wrapped tool itself reports an error (an MCP
+ * `isError` result). The script receives it as an error it can catch (FR-7).
+ */
+export class UpstreamToolError extends Error {
+  override readonly name = "UpstreamToolError";
+}
+
+/** One result the broker accepted and handed to the script, with its tags (FR-35). */
+export interface TaggedRead {
+  readonly path: string;
+  readonly server: string;
+  readonly tool: string;
+  readonly dataClass: DataClass;
+  readonly sensitive: boolean;
+  /** Size of the result as JSON. */
+  readonly bytes: number;
 }
 
 /** Carries one allowed call to the wrapped tool. The MCP client, once it exists. */
@@ -41,6 +62,15 @@ export interface BrokerHost extends SandboxHost {
   securityError(): ExecWardError | undefined;
   /** Every refusal in this run, in order, for the audit log. */
   readonly denials: readonly BrokerDenial[];
+  /** Every result handed to the script in this run, in order, with its tags (FR-35). */
+  readonly reads: readonly TaggedRead[];
+  /**
+   * The highest data class the script has been given in this run, or
+   * `undefined` when it has read nothing. Whatever the script returns or sends
+   * on is treated as carrying this class: a script can reshape a value, so the
+   * tag has to live with the run, outside the script's reach.
+   */
+  dataClass(): DataClass | undefined;
 }
 
 export interface BrokerDeps {
@@ -53,7 +83,34 @@ export interface BrokerDeps {
 /** Builds the broker for one run. Never shared between runs. */
 export function brokerHost(deps: BrokerDeps): BrokerHost {
   const denials: BrokerDenial[] = [];
+  const reads: TaggedRead[] = [];
   let ended: ExecWardError | undefined;
+
+  /** Checks one result and records its tags. Returns the copy the script is given. */
+  function accept(path: string, record: PolicyRecord, definition: ToolDefinition, result: unknown): unknown {
+    let json: string | undefined;
+    try {
+      json = JSON.stringify(result);
+    } catch {
+      json = undefined;
+    }
+    // `undefined`, a function or a value that points back at itself has no JSON form.
+    if (json === undefined) throw new Error("schema_invalid: the tool's result is not valid JSON data");
+    const bytes = new TextEncoder().encode(json).length;
+    if (bytes > CALL_LIMITS.maxToolResultBytes) {
+      throw new Error(`result_too_large: the tool's result is ${bytes} bytes; the limit is ${CALL_LIMITS.maxToolResultBytes}. Ask for less, for example one page at a time`);
+    }
+    // The script gets the copy that was measured, not the object the upstream still holds.
+    const copy = JSON.parse(json) as unknown;
+    if (definition.outputSchema !== undefined) {
+      const checked = checkAgainstSchema(copy, definition.outputSchema, "allow");
+      if (checked.problems.length > 0) {
+        throw new Error(`schema_invalid: the tool's result does not match its schema (${checked.problems.slice(0, 3).join("; ")})`);
+      }
+    }
+    reads.push({ path, server: record.server, tool: record.tool, dataClass: record.dataClass, sensitive: record.sensitive, bytes });
+    return copy;
+  }
 
   function deny(path: string, reason: string): never {
     denials.push({ path, reason });
@@ -77,7 +134,10 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
 
   return {
     denials,
+    reads,
     securityError: () => ended,
+    dataClass: () =>
+      reads.length === 0 ? undefined : DATA_CLASSES[Math.max(...reads.map((read) => DATA_CLASSES.indexOf(read.dataClass)))],
 
     async callTool(path, args) {
       guard(path);
@@ -107,7 +167,16 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         // Reaching outside the allowlist is a security refusal. The value itself is not repeated.
         if (!allowed) deny(path, `the ${found.kind === "url" ? "URL" : "path"} in "${found.at}" is not on the tool's allowlist`);
       }
-      return deps.upstream({ record, args });
+
+      let result: unknown;
+      try {
+        result = await deps.upstream({ record, args });
+      } catch (cause) {
+        // The upstream's own words are untrusted text: passed to the script, cut short, and nothing more.
+        const said = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`upstream_error: ${said.length > 500 ? `${said.slice(0, 500)}...` : said}`, { cause });
+      }
+      return accept(path, record, definition, result);
     },
 
     async search(query) {
