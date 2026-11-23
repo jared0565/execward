@@ -24,6 +24,8 @@ export type StaticCheckRule =
   | "secret"
   | "blocked_construct"
   | "undeclared_global"
+  /** A name that exists nowhere: most likely a typo. The one rule a model may fix and retry. */
+  | "unknown_name"
   | "global_assignment";
 
 export interface StaticCheckProblem {
@@ -54,6 +56,32 @@ const BLOCKED_GLOBALS: Readonly<Record<string, string>> = {
   Function: "the Function constructor",
   WebAssembly: "WebAssembly compilation",
 };
+
+/**
+ * Names that reach outside the sandbox in some JavaScript runtime: the network,
+ * the host, timers, other globals, or the machinery for getting at them. A
+ * script that uses one is refused as a security failure, with no retry, so a
+ * model cannot try them one after another (FR-41).
+ *
+ * Any other name the check does not know is refused too, and never runs, but
+ * as an ordinary error the model may fix: it is most likely a typo. This list
+ * is therefore not what keeps a script in; the allowlist is. It only decides
+ * which refusals count as probing. (Owner's decision, 2026-11-23.)
+ */
+export const REACH_GLOBALS: ReadonlySet<string> = new Set<string>([
+  // The global object by any name, and ways to walk it.
+  "globalThis", "self", "window", "global", "frames", "parent", "top", "arguments", "Reflect", "Proxy",
+  // Network.
+  "fetch", "XMLHttpRequest", "WebSocket", "EventSource", "Request", "Response", "Headers", "navigator", "location", "caches", "connect", "BroadcastChannel", "MessageChannel", "MessagePort",
+  // Host and process.
+  "process", "require", "module", "exports", "__dirname", "__filename", "Buffer", "Deno", "Bun", "importScripts", "Worker", "SharedWorker", "ServiceWorker", "postMessage", "addEventListener", "dispatchEvent",
+  // Timers and scheduling.
+  "setTimeout", "setInterval", "setImmediate", "clearTimeout", "clearInterval", "queueMicrotask", "scheduler", "requestAnimationFrame",
+  // Storage, crypto and shared memory.
+  "crypto", "localStorage", "sessionStorage", "indexedDB", "document", "SharedArrayBuffer", "Atomics", "FinalizationRegistry", "WeakRef",
+  // Code loading and generation not already named as a blocked construct.
+  "AsyncFunction", "GeneratorFunction", "ShadowRealm", "Compartment",
+]);
 
 /**
  * Shapes of well-known credentials. A script has no reason to hold one, and a
@@ -167,8 +195,10 @@ function globalProblems(program: AstNode): StaticCheckProblem[] {
     const blocked = BLOCKED_GLOBALS[name];
     if (blocked !== undefined) {
       problems.push({ rule: "blocked_construct", message: `${blocked} is not allowed`, ...at });
-    } else if (!ALLOWED_GLOBALS.has(name)) {
+    } else if (REACH_GLOBALS.has(name)) {
       problems.push({ rule: "undeclared_global", message: `"${name}" is not part of the Sandbox API`, ...at });
+    } else if (!ALLOWED_GLOBALS.has(name)) {
+      problems.push({ rule: "unknown_name", message: `"${name.slice(0, 60)}" is not defined; a script can use only the Sandbox API and names it declares itself`, ...at });
     } else if (reference.isWrite()) {
       problems.push({ rule: "global_assignment", message: `"${name}" cannot be reassigned`, ...at });
     }
@@ -201,7 +231,8 @@ function refused(scriptHash: string, problems: readonly StaticCheckProblem[]): S
     scriptHash,
     problems,
     error: {
-      code: "static_check_failed",
+      // Only when every problem is an unknown name is the refusal one a model may fix and retry.
+      code: problems.length > 0 && problems.every((problem) => problem.rule === "unknown_name") ? "script_error" : "static_check_failed",
       message: `${first?.message ?? "the script failed the pre-execution check"}${more}`,
       ...(first?.line === undefined ? {} : { line: first.line }),
     },
