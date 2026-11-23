@@ -240,7 +240,9 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   const started = deps.now();
   const runId = deps.newRunId();
   const limits = deps.limits ?? RUN_LIMITS;
-  const callsByTool: Record<string, number> = {};
+  // No prototype: a script chooses these names, and "toString" or "constructor" on an ordinary
+  // object would be found on its prototype and counted as something that is not a number.
+  const callsByTool: Record<string, number> = Object.create(null) as Record<string, number>;
   let scriptHash = EMPTY_SHA256;
 
   let assertionsPassed = 0;
@@ -250,7 +252,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   let hidePaths = false;
   const shownPath = (path: string): string => (!hidePaths || journal.some((entry) => entry.path === path && entry.outcome === "ok") ? path : UNNAMED_CALL);
   const shownCalls = (): Record<string, number> => {
-    const shown: Record<string, number> = {};
+    const shown: Record<string, number> = Object.create(null) as Record<string, number>;
     for (const [path, count] of Object.entries(callsByTool)) {
       const name = shownPath(path);
       shown[name] = (shown[name] ?? 0) + count;
