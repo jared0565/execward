@@ -11,6 +11,7 @@ import { appMode, INITIAL_CONTROL_STATE, memoryControlStore, ONBOARDING_DEFAULTS
 import type { ModelProvider, ToolBackend } from "../src/eval/types";
 import type { Executor } from "../src/executor";
 import { memoryMeterSink, meter } from "../src/meter/meter";
+import { memoryMetricsSink } from "../src/metrics/metrics";
 import { codeToolService } from "../src/service";
 import { record } from "./fixtures/policy";
 
@@ -220,6 +221,7 @@ describe("what the switches do to a run (FR-16, FR-17, FR-27)", () => {
       definitionFor: async () => ({ description: "t", inputSchema: { type: "object", additionalProperties: true } }),
       docsFor: async () => undefined,
       meter: meter({ level: "off", sink: memoryMeterSink() }),
+      metrics: memoryMetricsSink(),
       control: made.control,
       now: () => NOW,
       newRunId: () => `run-${++run}`,

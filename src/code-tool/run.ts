@@ -14,7 +14,8 @@ import type { ExecutionFailureKind, ExecutionLimits, Executor, SandboxHost } fro
 import { RUN_LIMITS, SCRIPT_LIMITS } from "../limits";
 import { checkScript } from "../static-check/check";
 import type { AuditLog } from "../audit/log";
-import type { MeterFactory, RunMeter } from "../meter/meter";
+import type { MeterFactory, MeterRecord, RunMeter } from "../meter/meter";
+import { metricFor, type MetricsSink } from "../metrics/metrics";
 import type { AttemptGate } from "./attempts";
 import { releaseGate, type GateCheck } from "./release-gate";
 
@@ -71,6 +72,8 @@ export interface CodeToolDeps {
   readonly attempts?: AttemptGate;
   /** Token metering (FR-19). Separate from the audit log, and never able to fail a run. */
   readonly meter?: MeterFactory;
+  /** Per-run metrics for monitoring. Separate from the audit log, and never able to fail a run. */
+  readonly metrics?: MetricsSink;
   /** The owner's switches (FR-16, FR-27): why a run for this project may not start, if it may not. */
   readonly control?: (project: string) => Promise<ExecWardError | undefined>;
   /**
@@ -219,8 +222,19 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
   const output = await runOnce(rawInput, deps);
   // Every ending is counted, whichever line of `runOnce` returned it.
   await deps.attempts?.settle(output);
+  if (deps.metrics) {
+    const project = typeof rawInput === "object" && rawInput !== null && typeof (rawInput as { project?: unknown }).project === "string" ? (rawInput as { project: string }).project.slice(0, 128) : "unknown";
+    try {
+      await deps.metrics.export(metricFor(output, project, meterRecords.get(output)));
+    } catch {
+      // A metric that cannot be sent is lost. The run is not.
+    }
+  }
   return output;
 }
+
+/** The meter's record for a reply, when metering was on, so the metric can carry it. */
+const meterRecords = new WeakMap<CodeToolOutput, MeterRecord>();
 
 async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolOutput> {
   const started = deps.now();
@@ -509,10 +523,11 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
       ? { ...(output.dataClass === undefined ? {} : { dataClass: output.dataClass }), masked: output.masked === true }
       : {};
   // FR-19: the meter counts what was written and what is sent back. It changes neither.
-  await runMeter?.finish({
+  const metered = await runMeter?.finish({
     script: input.data.script,
     returned: output.status === "completed" ? output.result : output.status === "error" ? output.error.message : "",
   });
+  if (metered) meterRecords.set(output, metered);
   // The outcome is on record before anyone is told it.
   return (await finish(output, { ...hygieneFacts, ...(gateChecks ? { releaseGate: gateChecks } : {}) })) ? output : unrecorded();
 }
