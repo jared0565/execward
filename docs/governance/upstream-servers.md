@@ -24,7 +24,7 @@ of its name, description and schemas.
 
 | Server | Purpose | Waiting on |
 |---|---|---|
-| GitHub, read-only | The first wrapped tools (task 1.5.1). The 15 tools proposed for it are in `src/tools/github-inventory.ts` | A narrowly scoped credential in the secret store (task 1.1.2), and the owner's approval of the tool list |
+| GitHub, read-only | The first wrapped tools (task 1.5.1). The 15 tools are in `src/tools/github-inventory.ts`; the connector and their definitions are in `src/connectors/github.ts`, built 2026-11-23 and tested against a fake | A narrowly scoped credential in the secret store (task 1.1.2), a run against GitHub with it, and the owner's approval of the tool list |
 
 ## How to add a server
 
