@@ -103,7 +103,8 @@ describe("the GitHub connector on Cloudflare", { timeout: 60_000 }, () => {
   it.skipIf(!configured)("passes GitHub's own refusal to the script as an error it can catch", async () => {
     const { output } = await run(`try { await tools.github_get_issue({ ...${where}, issue_number: 99999999 }); return "found"; } catch (error) { return String(error.message); }`);
     expect(output.status).toBe("completed");
-    expect(String(output.result)).toContain("GitHub answered 404");
+    // The tool is marked sensitive, so the script is told the status and not GitHub's own words.
+    expect(String(output.result)).toContain("the tool failed with status 404");
   });
 
   it.skipIf(!configured)("holds a credential that GitHub refuses to write with (task 1.1.2)", async () => {

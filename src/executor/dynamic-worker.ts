@@ -33,7 +33,7 @@ export interface WorkerLoader {
     readonly env: Readonly<Record<string, never>>;
     readonly globalOutbound: null;
     readonly limits: { readonly cpuMs: number };
-  }): { getEntrypoint(name: string): { run(host: HostBridge): Promise<unknown> } };
+  }): { getEntrypoint(name: string): { run(host: HostBridge, budget: number): Promise<unknown> } };
 }
 
 /**
@@ -65,19 +65,19 @@ export class HostBridge extends RpcTarget {
 
   async callTool(path: unknown, args: unknown): Promise<unknown> {
     this.#admit();
-    if (typeof path !== "string") throw new Error("a tool name must be text");
+    if (typeof path !== "string" || path.length > MAX_NAME_CHARS) throw new Error("a tool name must be text");
     return this.#host.callTool(path, args);
   }
 
   async search(query: unknown): Promise<unknown> {
     this.#admit();
-    if (typeof query !== "string") throw new Error("a search query must be text");
+    if (typeof query !== "string" || query.length > MAX_QUERY_CHARS) throw new Error(`a search query must be text of at most ${MAX_QUERY_CHARS} characters`);
     return this.#host.search(query);
   }
 
   async describe(path: unknown): Promise<unknown> {
     this.#admit();
-    if (typeof path !== "string") throw new Error("a tool name must be text");
+    if (typeof path !== "string" || path.length > MAX_NAME_CHARS) throw new Error("a tool name must be text");
     return this.#host.describe(path);
   }
 
@@ -85,6 +85,10 @@ export class HostBridge extends RpcTarget {
     this.#closed = true;
   }
 }
+
+/** Sizes checked where a call enters the host, before any other work is done on it. */
+const MAX_NAME_CHARS = 200;
+const MAX_QUERY_CHARS = 500;
 
 const TIMED_OUT = Symbol("timed out");
 
@@ -112,7 +116,7 @@ export function dynamicWorkerExecutor(loader: WorkerLoader): Executor {
         const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
           timer = setTimeout(() => resolve(TIMED_OUT), request.limits.wallClockMs);
         });
-        const report = await Promise.race([worker.getEntrypoint("Code").run(bridge), deadline]);
+        const report = await Promise.race([worker.getEntrypoint("Code").run(bridge, request.limits.maxResultBytes), deadline]);
 
         if (report === TIMED_OUT) {
           return failed("timeout", `the run did not finish within ${request.limits.wallClockMs} ms`);
@@ -138,10 +142,13 @@ export function dynamicWorkerExecutor(loader: WorkerLoader): Executor {
           return failed("quota_exceeded", "the run used more memory than the sandbox allows");
         }
         // Rule 3 of the executor interface: on any fault, report it. Never run the script another way.
-        return fault(`the sandbox failed: ${error instanceof Error ? error.message : String(error)}`);
+        // The platform's words go to the audit log, not to the caller: they are not ours to vouch for.
+        return fault("the sandbox failed", [], error instanceof Error ? error.message : String(error));
       } finally {
         if (timer !== undefined) clearTimeout(timer);
         bridge.close();
+        // A call still being checked in the host must not go upstream now.
+        request.host.close?.();
       }
     },
   };

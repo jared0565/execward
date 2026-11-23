@@ -38,6 +38,12 @@ export interface ToolDefinition {
  */
 export class UpstreamToolError extends Error {
   override readonly name = "UpstreamToolError";
+  /** The upstream's status code, when it gave one. For a sensitive tool this is all a script is told. */
+  readonly status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    if (status !== undefined) this.status = status;
+  }
 }
 
 /** Something unusual the broker let through but noted for the audit log (FR-29). */
@@ -228,7 +234,12 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     if (errorsInARow >= breakerLimit) end("circuit_open", path, `${errorsInARow} upstream errors in a row`);
   }
 
+  /** Set when the executor says the run is over (a time limit, a fault, or simply the end). */
+  let closed = false;
+
   function guard(path: string): void {
+    // Not a refusal: the run is simply over, and nothing more is done for it.
+    if (closed) throw new Error("the run has ended");
     if (ended) deny(path, "the run was ended by an earlier refusal");
   }
 
@@ -260,6 +271,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     reads,
     flags,
     securityError: () => ended,
+    close() {
+      closed = true;
+    },
     provenance() {
       return { dataClass: this.dataClass(), records: reads.reduce((sum, read) => sum + read.records, 0) };
     },
@@ -305,15 +319,33 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       checkDataFlow(path, record, args, checked.located.filter((found) => found.kind === "url").length);
       await checkQuotas(path, record);
 
+      // The checks above wait on stores. Meanwhile a sibling call may have been refused, a
+      // switch thrown or the time limit reached. Nothing is sent upstream for a run that is over.
+      guard(path);
+
       let result: unknown;
       try {
         result = await deps.upstream({ record, args });
       } catch (cause) {
+        guard(path);
         upstreamFailed(path);
+        if (record.sensitive) {
+          // A sensitive tool's own words could carry what it guards, so they are not passed on:
+          // only that it failed, and the status code if it gave one. Nothing was delivered, so
+          // nothing counts as read, and a failed read does not block what comes after it.
+          const status = (cause as { status?: unknown } | null)?.status;
+          const coded = typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? ` with status ${status}` : "";
+          throw new Error(`upstream_error: the tool failed${coded}; its message is withheld because the tool is marked sensitive`, { cause });
+        }
         // The upstream's own words are untrusted text: passed to the script, cut short, and nothing more.
         const said = cause instanceof Error ? cause.message : String(cause);
-        throw new Error(`upstream_error: ${said.length > 500 ? `${said.slice(0, 500)}...` : said}`, { cause });
+        const shown = said.length > 500 ? `${said.slice(0, 500)}...` : said;
+        // They are also data from that tool, so they count as a read of its class (FR-36).
+        reads.push({ path, server: record.server, tool: record.tool, dataClass: record.dataClass, sensitive: record.sensitive, bytes: new TextEncoder().encode(shown).length, records: 0 });
+        throw new Error(`upstream_error: ${shown}`, { cause });
       }
+      // A result that arrives after the run ended is not handed over.
+      guard(path);
       let accepted: unknown;
       try {
         accepted = accept(path, record, definition, result);
@@ -328,6 +360,8 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
 
     async search(query) {
       guard("search");
+      // The script's mistake, not a refusal. Without a limit, one call could buy any amount of host work.
+      if (query.length > SEARCH_LIMITS.maxQueryChars) throw new Error(`schema_invalid: a search query may be at most ${SEARCH_LIMITS.maxQueryChars} characters`);
       await switches("search");
       let records: readonly PolicyRecord[];
       try {
@@ -341,7 +375,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         .filter((record) => scriptMayCall(record) && record.tier === 0 && withinCap(record, cap))
         .map(pathOf)
         .sort();
-      const wanted = [...new Set(searchWords(query))];
+      const wanted = [...new Set(searchWords(query))].slice(0, SEARCH_LIMITS.maxWords);
       if (wanted.length === 0) return paths;
       // Models ask in phrases ("list workflow runs CI"), not in exact names. So a tool need not
       // match every word: each is scored by the words its name or description holds, and
@@ -370,6 +404,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
 
     async describe(path) {
       guard(path);
+      if (path.length > SEARCH_LIMITS.maxPathChars) throw new Error("no tool of that name is available to scripts");
       await switches(path);
       const record = await lookup(path);
       if (record === undefined || !scriptMayCall(record) || record.tier !== 0 || !withinCap(record, await dataClassCap(path))) {
@@ -386,6 +421,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     },
   };
 }
+
+/** How much one discovery call may ask of the host. */
+export const SEARCH_LIMITS = { maxQueryChars: 500, maxWords: 16, maxPathChars: 200 } as const;
 
 /** Lower-case words of a search, with a plural "s" dropped so "runs" finds "run". */
 function searchWords(text: string): string[] {

@@ -64,6 +64,8 @@ export function buildSandboxModules(script: string): SandboxModules {
   };
 }
 
+import { MAX_LOG_LINES, TRUNCATED_LOGS_NOTICE } from "./outcome";
+
 const KEEP = JSON.stringify([...SANDBOX_GLOBALS, ...LANGUAGE_BUILTINS, ...RUNTIME_KEEPS]);
 
 /**
@@ -98,16 +100,18 @@ function lineOf(error) {
 // name is hidden behind a fixed, empty property on the global object.
 function stripGlobals() {
   const names = new Set();
+  const left = [];
   for (let level = globalThis; level && level !== Object.prototype; level = Object.getPrototypeOf(level)) {
     for (const name of Object.getOwnPropertyNames(level)) {
       names.add(name);
       // Remove it from the prototype as well, or the script could read it back from there.
       if (level !== globalThis && !KEEP.has(name) && name !== "constructor") {
         try { delete level[name]; } catch {}
+        // Hidden on the global object is not enough if it can still be read from the prototype.
+        if (Object.prototype.hasOwnProperty.call(level, name)) left.push(name);
       }
     }
   }
-  const left = [];
   for (const name of names) {
     if (KEEP.has(name) || name === "constructor") continue;
     try { delete globalThis[name]; } catch {}
@@ -118,10 +122,25 @@ function stripGlobals() {
 }
 
 export class Code extends WorkerEntrypoint {
-  async run(host) {
+  async run(host, budget) {
+    // The host cuts logs and the result to its budget whatever arrives. Stopping here as well
+    // means the excess is never built up, sent across or measured.
+    const maxChars = typeof budget === "number" && budget > 0 ? budget : 1000000;
     const logs = [];
+    let logChars = 0;
+    let logsFull = false;
     const console = Object.freeze({
-      log: (...values) => { logs.push(values.map(format).join(" ")); },
+      log: (...values) => {
+        if (logsFull) return;
+        const line = values.map(format).join(" ");
+        if (logs.length >= ${MAX_LOG_LINES} || logChars + line.length > maxChars) {
+          logsFull = true;
+          logs.push(${JSON.stringify(TRUNCATED_LOGS_NOTICE)});
+          return;
+        }
+        logs.push(line);
+        logChars += line.length;
+      },
     });
     // The first failed assertion. Once set the run is over: no further call
     // leaves the sandbox, even if the script catches the error and carries on (FR-40).
@@ -156,6 +175,8 @@ export class Code extends WorkerEntrypoint {
       globalsLeft,
     });
     const globalsLeft = stripGlobals();
+    // A global that could not be hidden means the allowed set is not what was promised. Do not run.
+    if (globalsLeft.length > 0) return { status: "failed", kind: "script_error", message: "not run", assertionsPassed: 0, logs: [], globalsLeft: globalsLeft.slice(0, 20) };
     try {
       const value = await script(tools, search, describe, assert, console);
       // A script that caught its own failed assertion still failed it.
@@ -166,7 +187,10 @@ export class Code extends WorkerEntrypoint {
       } catch (error) {
         return { status: "failed", kind: "script_error", message: "the final value cannot be written as JSON: " + String(error && error.message), assertionsPassed, logs, globalsLeft };
       }
-      return { status: "completed", resultJson: resultJson === undefined ? "null" : resultJson, assertionsPassed, logs, globalsLeft };
+      if (resultJson === undefined) resultJson = "null";
+      // One character over is enough for the host to see that it was cut.
+      if (resultJson.length > maxChars + 1) resultJson = resultJson.slice(0, maxChars + 1);
+      return { status: "completed", resultJson, assertionsPassed, logs, globalsLeft };
     } catch (error) {
       if (failedAssertion) return assertionReport();
       return {

@@ -104,7 +104,8 @@ describe("a tool that reports an error (FR-7)", () => {
     });
     await expect(host.callTool("github_list_issues", {})).rejects.toThrow("upstream_error: Not Found");
     expect(host.securityError()).toBeUndefined();
-    expect(host.reads).toEqual([]);
+    // The words reached the script, so they count as data of the tool's class. No records were read.
+    expect(host.reads).toMatchObject([{ path: "github_list_issues", records: 0 }]);
     await expect(host.callTool("github_get_license", {})).resolves.toEqual({ key: "mit" });
   });
 

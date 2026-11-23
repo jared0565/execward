@@ -176,7 +176,9 @@ describe("the code tool's output contract (contract 2)", () => {
       throw new Error("isolate lost");
     });
     const output = await runCodeTool(INPUT, deps(executor, host));
-    expect(output).toMatchObject({ status: "error", error: { code: "sandbox_fault", message: "the executor failed: isolate lost" } });
+    expect(output).toMatchObject({ status: "error", error: { code: "sandbox_fault", message: "the executor failed" } });
+    // What the executor said is for the audit log, not the caller (review finding F7).
+    expect(JSON.stringify(output)).not.toContain("isolate lost");
     expect(upstreamCalls).toBe(0);
     expect(executor.requests.length).toBe(1);
   });
