@@ -20,6 +20,9 @@ function good(): Record<string, unknown> {
     upload_source_maps: true,
     observability: { enabled: true },
     worker_loaders: [{ binding: "LOADER" }],
+    d1_databases: [{ binding: "DB", database_name: "execward", database_id: "33b54ace-0649-4949-abe5-dacd833dfe10", migrations_dir: "migrations" }],
+    r2_buckets: [{ binding: "BACKUPS", bucket_name: "execward-backups" }],
+    triggers: { crons: ["*/5 * * * *"] },
   };
 }
 
@@ -41,8 +44,8 @@ describe("workerConfigProblems", () => {
 
   it.each([
     ["a KV namespace", { kv_namespaces: [{ binding: "CACHE", id: "abc" }] }],
-    ["a D1 database", { d1_databases: [{ binding: "DB", database_name: "x", database_id: "y" }] }],
-    ["an R2 bucket", { r2_buckets: [{ binding: "BUCKET", bucket_name: "x" }] }],
+    ["a queue", { queues: { producers: [{ binding: "Q", queue: "x" }] } }],
+    ["a secrets store", { secrets_store_secrets: [{ binding: "S", store_id: "x", secret_name: "y" }] }],
     ["a service binding", { services: [{ binding: "OTHER", service: "other-worker" }] }],
     ["a Durable Object", { durable_objects: { bindings: [{ name: "DO", class_name: "X" }] } }],
     ["an environment value", { vars: { API_BASE: "https://example.com" } }],
@@ -53,6 +56,33 @@ describe("workerConfigProblems", () => {
     const problems = workerConfigProblems({ ...good(), ...extra }, TODAY);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain("is not on the allowlist");
+  });
+
+  it("refuses a second database or bucket, under any name", () => {
+    const database = { ...good(), d1_databases: [...(good().d1_databases as unknown[]), { binding: "OTHER", database_name: "x", database_id: "y" }] };
+    expect(workerConfigProblems(database, TODAY)).toEqual([
+      'binding "OTHER" in "d1_databases" is not on the allowlist',
+      'binding "OTHER" in "d1_databases" has settings that are not on the allowlist: database_name, database_id',
+    ]);
+    const bucket = { ...good(), r2_buckets: [...(good().r2_buckets as unknown[]), { binding: "ASSETS", bucket_name: "pivot-parlor-assets" }] };
+    expect(workerConfigProblems(bucket, TODAY)[0]).toBe('binding "ASSETS" in "r2_buckets" is not on the allowlist');
+  });
+
+  it("refuses the allowed binding name pointed at another database or bucket", () => {
+    const database = { ...good(), d1_databases: [{ binding: "DB", database_name: "execward", database_id: "e0ec5608-b235-4059-816a-230d1be84317", migrations_dir: "migrations" }] };
+    expect(workerConfigProblems(database, TODAY)).toEqual(['binding "DB" in "d1_databases" must have "database_id" set to "33b54ace-0649-4949-abe5-dacd833dfe10"']);
+    const bucket = { ...good(), r2_buckets: [{ binding: "BACKUPS", bucket_name: "pivot-parlor-audit" }] };
+    expect(workerConfigProblems(bucket, TODAY)).toEqual(['binding "BACKUPS" in "r2_buckets" must have "bucket_name" set to "execward-backups"']);
+    const remote = { ...good(), r2_buckets: [{ binding: "BACKUPS", bucket_name: "execward-backups", jurisdiction: "eu" }] };
+    expect(workerConfigProblems(remote, TODAY)[0]).toContain("settings that are not on the allowlist: jurisdiction");
+  });
+
+  it("refuses any timer but the one allowed, and requires that one", () => {
+    expect(workerConfigProblems({ ...good(), triggers: { crons: ["* * * * *"] } }, TODAY)).toEqual(['"triggers" must be exactly {"crons":["*/5 * * * *"]}']);
+    expect(workerConfigProblems({ ...good(), triggers: { crons: ["*/5 * * * *", "0 0 * * *"] } }, TODAY).length).toBe(1);
+    const { triggers: _gone, ...none } = good();
+    void _gone;
+    expect(workerConfigProblems(none, TODAY).length).toBe(1);
   });
 
   it("refuses a second Worker Loader under another name", () => {
@@ -96,8 +126,8 @@ describe("this repository's Worker (task 1.1.1)", () => {
     expect(workerConfigProblems(config)).toEqual([]);
   });
 
-  it("has exactly one binding, the Worker Loader", () => {
-    expect(ALLOWED_BINDINGS).toEqual([{ section: "worker_loaders", binding: "LOADER" }]);
+  it("has exactly three bindings: the Worker Loader, its own database and the backup bucket", () => {
+    expect(ALLOWED_BINDINGS.map((entry) => `${entry.section}:${entry.binding}`)).toEqual(["worker_loaders:LOADER", "d1_databases:DB", "r2_buckets:BACKUPS"]);
   });
 
   it("builds the Worker in CI, so a broken configuration cannot merge", () => {

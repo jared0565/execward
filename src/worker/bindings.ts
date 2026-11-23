@@ -12,14 +12,36 @@ export const COMPATIBILITY_DATE = "2026-11-13";
 /** Compatibility flags the Worker may set. None are needed yet. */
 export const ALLOWED_COMPATIBILITY_FLAGS: readonly string[] = [];
 
+export interface AllowedBinding {
+  readonly section: string;
+  readonly binding: string;
+  /** The other settings the entry must have, each with exactly this value. None when absent. */
+  readonly settings?: Readonly<Record<string, string>>;
+}
+
 /**
- * Every binding the Worker may have: the config section it is declared in, and
- * the name it has in code. Adding a row here is a security decision.
+ * Every binding the Worker may have: the config section it is declared in, the
+ * name it has in code, and the one resource it may point at. Adding a row here
+ * is a security decision.
  */
-export const ALLOWED_BINDINGS = [
+export const ALLOWED_BINDINGS: readonly AllowedBinding[] = [
   /** Loads a model-written script into a Dynamic Worker (task 1.2). */
   { section: "worker_loaders", binding: "LOADER" },
-] as const;
+  /** The Worker's own database: policy, audit log, switches, queue, counters (added 2026-11-23). */
+  {
+    section: "d1_databases",
+    binding: "DB",
+    settings: { database_name: "execward", database_id: "33b54ace-0649-4949-abe5-dacd833dfe10", migrations_dir: "migrations" },
+  },
+  /** Where the daily backup of that database is written (task 1.4.5, added 2026-11-23). */
+  { section: "r2_buckets", binding: "BACKUPS", settings: { bucket_name: "execward-backups" } },
+];
+
+/**
+ * The one timer the Worker runs on: every five minutes (src/worker/scheduled.ts).
+ * The configuration's "triggers" must be exactly this.
+ */
+export const ALLOWED_TRIGGERS = { crons: ["*/5 * * * *"] } as const;
 
 /**
  * Config keys that are not bindings and are allowed, with the value each must
@@ -42,4 +64,6 @@ export const ALLOWED_SETTINGS = {
 /** The Worker's environment as the platform supplies it. Typed fully in task 1.2. */
 export interface Env {
   readonly LOADER: unknown;
+  readonly DB: unknown;
+  readonly BACKUPS: unknown;
 }

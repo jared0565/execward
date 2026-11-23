@@ -10,6 +10,7 @@ import {
   ALLOWED_BINDINGS,
   ALLOWED_COMPATIBILITY_FLAGS,
   ALLOWED_SETTINGS,
+  ALLOWED_TRIGGERS,
   COMPATIBILITY_DATE,
 } from "./bindings";
 
@@ -58,7 +59,7 @@ export function workerConfigProblems(config: unknown, today: Date = new Date()):
   const problems: string[] = [];
 
   const bindingSections = new Set<string>(ALLOWED_BINDINGS.map((entry) => entry.section));
-  const structured = new Set(["compatibility_date", "compatibility_flags", "observability"]);
+  const structured = new Set(["compatibility_date", "compatibility_flags", "observability", "triggers"]);
   for (const key of Object.keys(config)) {
     if (key in ALLOWED_SETTINGS || bindingSections.has(key) || structured.has(key)) continue;
     problems.push(`"${key}" is not on the allowlist`);
@@ -98,8 +99,13 @@ export function workerConfigProblems(config: unknown, today: Date = new Date()):
     problems.push(`"observability" must be exactly { "enabled": true }`);
   }
 
+  if (JSON.stringify(config.triggers) !== JSON.stringify(ALLOWED_TRIGGERS)) {
+    problems.push(`"triggers" must be exactly ${JSON.stringify(ALLOWED_TRIGGERS)}`);
+  }
+
   for (const section of bindingSections) {
-    const allowed = ALLOWED_BINDINGS.filter((entry) => entry.section === section).map((entry) => entry.binding);
+    const entries = ALLOWED_BINDINGS.filter((entry) => entry.section === section);
+    const allowed = entries.map((entry) => entry.binding);
     const declared = config[section];
     if (!Array.isArray(declared)) {
       problems.push(`"${section}" must be a list`);
@@ -112,12 +118,18 @@ export function workerConfigProblems(config: unknown, today: Date = new Date()):
         continue;
       }
       names.push(item.binding);
-      if (!allowed.includes(item.binding as (typeof allowed)[number])) {
+      if (!allowed.includes(item.binding)) {
         problems.push(`binding "${item.binding}" in "${section}" is not on the allowlist`);
       }
-      const extra = Object.keys(item).filter((key) => key !== "binding");
+      // The entry may carry only the settings the allowlist names, each with the value it names:
+      // a binding of the right name pointed at another database is not the allowed binding.
+      const settings = entries.find((entry) => entry.binding === item.binding)?.settings ?? {};
+      const extra = Object.keys(item).filter((key) => key !== "binding" && !Object.hasOwn(settings, key));
       if (extra.length > 0) {
         problems.push(`binding "${item.binding}" in "${section}" has settings that are not on the allowlist: ${extra.join(", ")}`);
+      }
+      for (const [key, expected] of Object.entries(settings)) {
+        if (item[key] !== expected) problems.push(`binding "${item.binding}" in "${section}" must have "${key}" set to ${JSON.stringify(expected)}`);
       }
     }
     for (const binding of allowed) {
