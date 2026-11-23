@@ -148,7 +148,7 @@ export function dynamicWorkerExecutor(loader: WorkerLoader): Executor {
         if (timer !== undefined) clearTimeout(timer);
         bridge.close();
         // A call still being checked in the host must not go upstream now.
-        request.host.close?.();
+        await Promise.resolve(request.host.close?.()).catch(() => undefined);
       }
     },
   };

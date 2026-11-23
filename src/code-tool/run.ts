@@ -177,7 +177,7 @@ function countingHost(host: SandboxHost, callsByTool: Record<string, number>, jo
       }
     },
     close() {
-      host.close?.();
+      return host.close?.();
     },
     async search(query) {
       const found = await host.search(query);

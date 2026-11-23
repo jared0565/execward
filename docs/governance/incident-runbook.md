@@ -20,7 +20,7 @@ Do this first, before finding out what happened.
 | Throw the kill switch | Owner console, kill switch. It needs no reason and no model | Delete the Worker's deployment in the Cloudflare dashboard, or disable its route |
 | Confirm it took | Start any run. It must be refused with `code_mode_off` | Confirm the Worker no longer answers |
 
-The kill switch stops every project. A security exception has already paused its own
+The kill switch stops every project. A new run is refused at once; a script already running stops within a quarter of a second. A security exception has already paused its own
 project by the time you read about it; the kill switch is for when you do not yet know
 how far it goes.
 

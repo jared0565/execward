@@ -128,17 +128,28 @@ export async function releaseRun(context: QuotaContext, runId: string): Promise<
 }
 
 /**
- * Counts one upstream call against the project's and the tool's daily limits.
- * Returns the reason for refusing it, or `undefined`.
+ * Counts `amount` upstream calls against the project's and the tool's daily
+ * limits. Returns the reason for refusing them, or `undefined`.
+ *
+ * A single refused call stays counted, as before. A refused block of several
+ * is taken off again, so the caller can ask for one: counting ahead must not
+ * use up a limit that single calls would still fit under.
  */
-export async function countCall(context: QuotaContext, path: string, toolCallsPerDay: number | undefined): Promise<string | undefined> {
+export async function countCall(context: QuotaContext, path: string, toolCallsPerDay: number | undefined, amount = 1): Promise<string | undefined> {
   const quotas = context.quotas ?? PROJECT_QUOTAS;
   const now = context.now();
+  const projectKey = `calls:${context.project}`;
+  const toolKey = `calls:${context.project}:${path}`;
   try {
-    if ((await context.store.add(`calls:${context.project}`, DAY, 1, now)) > quotas.upstreamCallsPerDay) {
+    if ((await context.store.add(projectKey, DAY, amount, now)) > quotas.upstreamCallsPerDay) {
+      if (amount > 1) await context.store.add(projectKey, DAY, -amount, now);
       return `the project's limit of ${quotas.upstreamCallsPerDay} upstream calls a day was reached`;
     }
-    if (toolCallsPerDay !== undefined && (await context.store.add(`calls:${context.project}:${path}`, DAY, 1, now)) > toolCallsPerDay) {
+    if (toolCallsPerDay !== undefined && (await context.store.add(toolKey, DAY, amount, now)) > toolCallsPerDay) {
+      if (amount > 1) {
+        await context.store.add(toolKey, DAY, -amount, now);
+        await context.store.add(projectKey, DAY, -amount, now);
+      }
       return `the tool's limit of ${toolCallsPerDay} calls a day was reached`;
     }
     return undefined;
@@ -146,3 +157,18 @@ export async function countCall(context: QuotaContext, path: string, toolCallsPe
     return "the quota service is unavailable";
   }
 }
+
+/** Gives back calls that were counted ahead and not made. A failure leaves them counted, which errs towards refusing. */
+export async function returnCalls(context: QuotaContext, path: string, toolCallsPerDay: number | undefined, amount: number): Promise<void> {
+  if (amount <= 0) return;
+  const now = context.now();
+  try {
+    await context.store.add(`calls:${context.project}`, DAY, -amount, now);
+    if (toolCallsPerDay !== undefined) await context.store.add(`calls:${context.project}:${path}`, DAY, -amount, now);
+  } catch {
+    // Left counted.
+  }
+}
+
+/** The most calls counted in one go. A loop of calls writes a counter about once in this many. */
+export const MAX_COUNT_BLOCK = 16;

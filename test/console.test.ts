@@ -12,7 +12,7 @@ import type { ModelProvider, ToolBackend } from "../src/eval/types";
 import type { Executor } from "../src/executor";
 import { memoryMeterSink, meter } from "../src/meter/meter";
 import { memoryMetricsSink } from "../src/metrics/metrics";
-import { codeToolService } from "../src/service";
+import { codeToolService, RUN_RECHECK_MS } from "../src/service";
 import { record } from "./fixtures/policy";
 
 const NOW = 1_800_000_000_000;
@@ -196,15 +196,18 @@ describe("what the switches do to a run (FR-16, FR-17, FR-27)", () => {
   });
 
   /** The whole service over a console the test drives. The stand-in script calls the tools given, in order. */
-  async function service(duringRun?: (step: number) => Promise<void>) {
+  async function service(duringRun?: (step: number) => Promise<void>, gapMs: number = RUN_RECHECK_MS) {
     const made = await running();
     const upstreamCalls: string[] = [];
     let run = 0;
+    const clock = { at: NOW };
     const executor: Executor = {
       name: "scripted",
       async execute(request) {
         const seen: unknown[] = [];
         for (const [step, tool] of ["github_list_issues", "github_get_commit", "github_list_issues"].entries()) {
+          // Each call comes a recheck period after the last, unless the test says how long.
+          clock.at += gapMs;
           await duringRun?.(step);
           seen.push(await request.host.callTool(tool, {}).catch((error: Error) => `caught: ${error.message}`));
         }
@@ -223,7 +226,7 @@ describe("what the switches do to a run (FR-16, FR-17, FR-27)", () => {
       meter: meter({ level: "off", sink: memoryMeterSink() }),
       metrics: memoryMetricsSink(),
       control: made.control,
-      now: () => NOW,
+      now: () => clock.at,
       newRunId: () => `run-${++run}`,
     });
     const attempt = () => serve({ script: "return 1;", project: "work" }, { providerRoute: "unknown", attempts: attemptGate() });
@@ -254,6 +257,20 @@ describe("what the switches do to a run (FR-16, FR-17, FR-27)", () => {
     expect(reply.report.callsByTool).toEqual({ github_list_issues: 2, github_get_commit: 1 });
     // The script caught the refusal and returned a value; the value is not handed over.
     expect(JSON.stringify(reply)).not.toContain("caught");
+  });
+
+  it("uses one reading of the switches for calls less than a recheck period apart, and no longer (owner's decision, task 1.9.4)", async () => {
+    // Calls 100 ms apart: the switch is thrown before the second call, 100 ms after the first reading.
+    const made = await service(async (step) => {
+      if (step === 1) await made.console.setCodeMode(OWNER, false);
+    }, 100);
+    const reply = await made.attempt();
+    // The second and third calls come 100 and 200 ms after the reading the first call made:
+    // inside the period, so that reading is used and both go out. This is the price of the choice.
+    expect(reply.status).toBe("completed");
+    expect(made.upstreamCalls).toEqual(["list_issues", "get_commit", "list_issues"]);
+    // A new run reads afresh, whatever the clock says.
+    expect(await made.attempt()).toMatchObject({ status: "refused", error: { code: "code_mode_off" } });
   });
 
   it("lists side-effecting calls already made, when there are any", () => {

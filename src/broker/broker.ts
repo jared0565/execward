@@ -21,7 +21,7 @@ import { DefinitionChangedError } from "../registry/definition";
 import { pathAllowed, urlAllowed } from "./allowlists";
 import { checkAgainstSchema } from "./json-schema";
 import { effectivePolicy, pathOf, type PolicyStore } from "./policy-store";
-import { countCall, memoryQuotaStore, type QuotaContext } from "./quotas";
+import { countCall, MAX_COUNT_BLOCK, memoryQuotaStore, returnCalls, type QuotaContext } from "./quotas";
 
 /** The pinned definition of one wrapped tool. Pinning and its hash are task 1.5.4. */
 export interface ToolDefinition {
@@ -224,9 +224,28 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     callsThisRun.set(path, count);
     const perRun = record.quotas.callsPerRun;
     if (perRun !== undefined && count > perRun) end("quota_exceeded", path, `the tool's limit of ${perRun} calls in one run was reached`);
-    const over = await countCall(quotas, path, record.quotas.callsPerDay);
-    if (over !== undefined) end("quota_exceeded", path, over);
+    // Each count is a write to the database. A script that loops over a tool would pay for
+    // one on every call, so calls are counted ahead in growing blocks: 1, 2, 4, up to
+    // MAX_COUNT_BLOCK. A block the limit has no room for is not kept; the call is then
+    // counted on its own, so the limit is met exactly, never early and never late. What
+    // was counted and not used is given back when the run closes.
+    const ahead = counted.get(path) ?? { left: 0, block: 1, limit: record.quotas.callsPerDay };
+    counted.set(path, ahead);
+    if (ahead.left === 0) {
+      let over = await countCall(quotas, path, ahead.limit, ahead.block);
+      if (over !== undefined && ahead.block > 1) {
+        ahead.block = 1;
+        over = await countCall(quotas, path, ahead.limit, 1);
+      }
+      if (over !== undefined) end("quota_exceeded", path, over);
+      ahead.left = ahead.block;
+      ahead.block = Math.min(ahead.block * 2, MAX_COUNT_BLOCK);
+    }
+    ahead.left--;
   }
+
+  /** Calls counted against the daily limits and not yet made, for each tool. */
+  const counted = new Map<string, { left: number; block: number; limit: number | undefined }>();
 
   /** The circuit breaker (FR-27): a run that keeps failing upstream is ended, not left to retry for ever. */
   function upstreamFailed(path: string): void {
@@ -271,8 +290,11 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     reads,
     flags,
     securityError: () => ended,
-    close() {
+    async close() {
       closed = true;
+      const unused = [...counted].filter(([, ahead]) => ahead.left > 0);
+      counted.clear();
+      for (const [path, ahead] of unused) await returnCalls(quotas, path, ahead.limit, ahead.left);
     },
     provenance() {
       return { dataClass: this.dataClass(), records: reads.reduce((sum, read) => sum + read.records, 0) };
