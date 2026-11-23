@@ -17,7 +17,8 @@
     "build:worker": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
     "deploy:test-worker": "wrangler deploy -c test/workers/wrangler.deployed.jsonc",
     "test:deployed": "vitest run --config vitest.deployed.config.ts",
-    "measure:latency": "tsx scripts/measure-latency.ts"
+    "measure:latency": "tsx scripts/measure-latency.ts",
+    "check:deployed": "tsx scripts/check-deployed.ts"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "1.12.0",
