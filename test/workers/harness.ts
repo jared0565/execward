@@ -5,8 +5,19 @@
  * do. It is never deployed; production has no route that runs a script yet.
  */
 import type { ExecutionLimits, SandboxHost } from "../../src/executor";
+import migration from "../../migrations/0001_policy.sql";
+import { brokerHost } from "../../src/broker/broker";
+import { d1PolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
 import { runCodeTool } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
+
+interface PolicyBody {
+  readonly records?: readonly unknown[];
+  readonly rawRows?: readonly { path: string; record: string }[];
+  readonly noTable?: boolean;
+  readonly get?: string;
+  readonly input?: unknown;
+}
 
 interface RunBody {
   readonly script: string;
@@ -38,8 +49,45 @@ function scriptedHost(calls: { path: string; args: unknown }[]): SandboxHost {
 }
 
 export default {
-  async fetch(request: Request, env: { LOADER: WorkerLoader }): Promise<Response> {
+  async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like }): Promise<Response> {
     const calls: { path: string; args: unknown }[] = [];
+    const route = new URL(request.url).pathname;
+    if (route === "/policy" || route === "/brokered") {
+      // A fresh policy table on the local D1 database for every request.
+      const body = (await request.json()) as PolicyBody;
+      await env.DB.prepare("DROP TABLE IF EXISTS policy").bind().run();
+      if (!body.noTable) await env.DB.prepare(migration).bind().run();
+      for (const record of body.records ?? []) await putPolicyRecord(env.DB, record);
+      for (const row of body.rawRows ?? []) {
+        await env.DB.prepare("INSERT INTO policy (path, record) VALUES (?1, ?2)").bind(row.path, row.record).run();
+      }
+      const store = d1PolicyStore(env.DB);
+      if (route === "/policy") {
+        const read = async (work: () => Promise<unknown>) => {
+          try {
+            return { value: (await work()) ?? null };
+          } catch (error) {
+            return { error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) };
+          }
+        };
+        return Response.json({ got: await read(() => store.get(body.get ?? "")), list: await read(() => store.list()) });
+      }
+      // The whole stack: code tool, static check, Dynamic Worker, broker, policy table.
+      const output = await runCodeTool(body.input, {
+        executor: dynamicWorkerExecutor(env.LOADER),
+        hostFor: () =>
+          brokerHost({
+            store,
+            upstream: async ({ record, args }) => {
+              calls.push({ path: `${record.server}/${record.tool}`, args });
+              return { from: record.tool, args };
+            },
+          }),
+        newRunId: () => "brokered-run",
+        now: () => Date.now(),
+      });
+      return Response.json({ output, calls });
+    }
     if (new URL(request.url).pathname === "/code-tool") {
       // The whole run path: input contract, static check, executor, output contract.
       let runs = 0;
