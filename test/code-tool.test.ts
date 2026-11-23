@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fakeToken } from "../src/adversarial/fixtures";
+import { auditLog, memoryAuditStore } from "../src/audit/log";
 import { runCodeTool, type CodeToolDeps, type RunHost } from "../src/code-tool/run";
 import { codeToolOutputSchema } from "../src/contracts/code-tool";
 import type { ExecutionOutcome, ExecutionRequest, Executor } from "../src/executor";
@@ -28,7 +29,7 @@ function scriptedExecutor(behaviour: (request: ExecutionRequest) => Promise<Exec
 
 function deps(executor: Executor, host: RunHost = EMPTY_HOST): CodeToolDeps {
   let clock = 1_000;
-  return { executor, hostFor: () => host, newRunId: () => "run-1", now: () => (clock += 25) };
+  return { executor, audit: auditLog(memoryAuditStore(), () => 0), hostFor: () => host, newRunId: () => "run-1", now: () => (clock += 25) };
 }
 
 const completed = (result: unknown, extra: Partial<{ truncated: boolean; logs: string[] }> = {}): ExecutionOutcome => ({

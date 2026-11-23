@@ -8,11 +8,12 @@
  * (the broker, tasks 1.3.x); this file only counts the calls for the report.
  */
 import { codeToolInputSchema, codeToolOutputSchema, type CodeToolOutput, type RunReport } from "../contracts/code-tool";
-import type { ErrorCode, ExecWardError } from "../contracts/errors";
+import { ERROR_CODES, type ErrorCode, type ExecWardError } from "../contracts/errors";
 import { DATA_CLASSES, type DataClass } from "../contracts/policy";
 import type { ExecutionFailureKind, ExecutionLimits, Executor, SandboxHost } from "../executor";
-import { RUN_LIMITS } from "../limits";
+import { RUN_LIMITS, SCRIPT_LIMITS } from "../limits";
 import { checkScript } from "../static-check/check";
+import type { AuditLog } from "../audit/log";
 
 /**
  * The script's way out for one run. A host that refuses a call on security
@@ -28,8 +29,27 @@ export type RunHost = SandboxHost & {
   provenance?(): { readonly dataClass: DataClass | undefined; readonly records: number };
 };
 
+/** One call a script made, as the audit log records it (FR-8). */
+export interface CallRecord {
+  readonly path: string;
+  readonly args: unknown;
+  /** `ok`, or the error code the call ended with. */
+  outcome: string;
+  /** Size of the result as JSON; 0 when there was none. */
+  resultBytes: number;
+}
+
+/** Arguments larger than this are logged as a size, not in full. */
+const MAX_LOGGED_ARGUMENT_BYTES = 4 * 1024;
+
 export interface CodeToolDeps {
   readonly executor: Executor;
+  /**
+   * The audit log. Required: there is no switch that turns it off (FR-8). A
+   * run that cannot be recorded does not start, and a result that cannot be
+   * recorded is not returned.
+   */
+  readonly audit: AuditLog;
   /** Builds the script's way out for one run: the broker. */
   readonly hostFor: (run: { readonly runId: string; readonly project: string }) => RunHost;
   readonly newRunId: () => string;
@@ -83,12 +103,38 @@ export function truncationNotice(partial: unknown, maxBytes: number): { notice: 
   };
 }
 
-function countingHost(host: SandboxHost, callsByTool: Record<string, number>): SandboxHost {
+function byteLength(value: unknown): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value) ?? "").length;
+  } catch {
+    return 0;
+  }
+}
+
+function countingHost(host: SandboxHost, callsByTool: Record<string, number>, journal: CallRecord[]): SandboxHost {
   return {
-    callTool(path, args) {
+    async callTool(path, args) {
       // Counted when asked, not when answered: a refused or failed call is still a call.
       callsByTool[path] = (callsByTool[path] ?? 0) + 1;
-      return host.callTool(path, args);
+      const size = byteLength(args);
+      const entry: CallRecord = {
+        path,
+        args: size > MAX_LOGGED_ARGUMENT_BYTES ? `[${size} bytes of arguments, not logged in full]` : args,
+        outcome: "pending",
+        resultBytes: 0,
+      };
+      journal.push(entry);
+      try {
+        const result = await host.callTool(path, args);
+        entry.outcome = "ok";
+        entry.resultBytes = byteLength(result);
+        return result;
+      } catch (error) {
+        // Host errors start with their code, for example "policy_denied: ...".
+        const code = /^([a-z_]+):/.exec(error instanceof Error ? error.message : "")?.[1];
+        entry.outcome = code ?? "error";
+        throw error;
+      }
     },
     search: (query) => host.search(query),
     describe: (path) => host.describe(path),
@@ -134,7 +180,22 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     verification: "not_applicable",
     durationMs: Math.max(0, deps.now() - started),
   });
-  const refused = (error: ExecWardError): CodeToolOutput => ({ status: "refused", error, report: report([error]) });
+  const journal: CallRecord[] = [];
+  const isSecurity = (error: ExecWardError | undefined): boolean => error !== undefined && ERROR_CODES[error.code].security;
+
+  /** A refusal is recorded too. If even that cannot be written, the refusal still stands. */
+  const refused = async (error: ExecWardError, script: unknown, project: unknown): Promise<CodeToolOutput> => {
+    await deps.audit
+      .record({
+        kind: "run_refused",
+        runId,
+        project: typeof project === "string" ? project.slice(0, 128) : "unknown",
+        body: { scriptHash, script: typeof script === "string" ? script.slice(0, SCRIPT_LIMITS.maxScriptBytes) : null, error, security: isSecurity(error) },
+      })
+      .catch(() => undefined);
+    return { status: "refused", error, report: report([error]) };
+  };
+  const rawProject = typeof rawInput === "object" && rawInput !== null ? (rawInput as { project?: unknown }).project : undefined;
 
   // The static check runs on any script text, before the rest of the input is
   // judged, so an oversized or hostile script is always reported as that.
@@ -142,12 +203,16 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
   if (typeof rawScript === "string") {
     const check = await checkScript(rawScript);
     scriptHash = check.scriptHash;
-    if (!check.ok) return refused(check.error);
+    if (!check.ok) return refused(check.error, rawScript, rawProject);
   }
 
   const input = codeToolInputSchema.safeParse(rawInput);
   if (!input.success) {
-    return refused({ code: "schema_invalid", message: `the input does not match the code tool's contract: ${describeIssues(input.error.issues)}` });
+    return refused(
+      { code: "schema_invalid", message: `the input does not match the code tool's contract: ${describeIssues(input.error.issues)}` },
+      rawScript,
+      rawProject,
+    );
   }
 
   const admitted = { runId, project: input.data.project };
@@ -159,8 +224,51 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
       // Fail closed: no answer from the quota service is a refusal.
       over = { code: "quota_exceeded", message: "the quota service is unavailable" };
     }
-    if (over) return refused(over);
+    if (over) return refused(over, input.data.script, input.data.project);
   }
+
+  // FR-8: the run is on record before it starts. No record, no run.
+  try {
+    await deps.audit.record({
+      kind: "run_started",
+      runId,
+      project: input.data.project,
+      body: { scriptHash, script: input.data.script, executor: deps.executor.name, limits, ...(input.data.intent === undefined ? {} : { intent: input.data.intent }) },
+    });
+  } catch {
+    await deps.admission?.release(admitted).catch(() => undefined);
+    const error: ExecWardError = { code: "policy_denied", message: "the audit log is unavailable, so the run was not started" };
+    return { status: "refused", error, report: report([error]) };
+  }
+
+  /** Records how the run ended. False when it could not be written. */
+  const finish = async (reply: CodeToolOutput, extra: Record<string, unknown> = {}): Promise<boolean> => {
+    const error = reply.status === "error" || reply.status === "refused" ? reply.error : undefined;
+    try {
+      await deps.audit.record({
+        kind: "run_finished",
+        runId,
+        project: input.data.project,
+        body: {
+          scriptHash,
+          status: reply.status,
+          ...(error ? { error } : {}),
+          security: isSecurity(error),
+          calls: journal,
+          resultBytes: reply.status === "completed" ? byteLength(reply.result) : 0,
+          durationMs: reply.report.durationMs,
+          ...extra,
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const unrecorded = (): CodeToolOutput => {
+    const error: ExecWardError = { code: "policy_denied", message: "the audit log is unavailable, so the result is withheld" };
+    return { status: "error", error, report: report([error]) };
+  };
 
   let output: CodeToolOutput;
   try {
@@ -169,7 +277,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
       runId,
       script: input.data.script,
       limits,
-      host: countingHost(host, callsByTool),
+      host: countingHost(host, callsByTool, journal),
     });
     assertionsPassed = outcome.assertionsPassed ?? 0;
 
@@ -220,7 +328,8 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
   } catch (cause) {
     // An executor must not throw; if one does, that is a sandbox fault. Nothing is run another way.
     const error: ExecWardError = { code: "sandbox_fault", message: `the executor failed: ${cause instanceof Error ? cause.message : String(cause)}` };
-    return { status: "error", error, report: report([error]) };
+    const reply: CodeToolOutput = { status: "error", error, report: report([error]) };
+    return (await finish(reply)) ? reply : unrecorded();
   } finally {
     await deps.admission?.release(admitted).catch(() => undefined);
   }
@@ -229,7 +338,13 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
   const checked = codeToolOutputSchema.safeParse(output);
   if (!checked.success) {
     const error: ExecWardError = { code: "sandbox_fault", message: "the run produced a reply that does not match the output contract" };
-    return { status: "error", error, report: report([error]) };
+    const reply: CodeToolOutput = { status: "error", error, report: report([error]) };
+    return (await finish(reply)) ? reply : unrecorded();
   }
-  return output;
+  const hygieneFacts =
+    output.status === "completed" || output.status === "error"
+      ? { ...(output.dataClass === undefined ? {} : { dataClass: output.dataClass }), masked: output.masked === true }
+      : {};
+  // The outcome is on record before anyone is told it.
+  return (await finish(output, hygieneFacts)) ? output : unrecorded();
 }

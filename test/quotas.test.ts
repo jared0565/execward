@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { auditLog, memoryAuditStore } from "../src/audit/log";
 import { brokerHost } from "../src/broker/broker";
 import { memoryPolicyStore } from "../src/broker/policy-store";
 import { admitRun, countCall, memoryQuotaStore, releaseRun, type QuotaContext, type QuotaStore } from "../src/broker/quotas";
@@ -111,6 +112,7 @@ describe("run admission at the code tool (FR-27)", () => {
     let id = 0;
     return {
       executor: run,
+      audit: auditLog(memoryAuditStore(), () => 0),
       hostFor: () => host,
       newRunId: () => `run-${++id}`,
       now: () => 0,

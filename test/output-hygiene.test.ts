@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { INJECTION } from "../src/adversarial/fixtures";
+import { auditLog, memoryAuditStore } from "../src/audit/log";
 import { brokerHost } from "../src/broker/broker";
 import { memoryPolicyStore } from "../src/broker/policy-store";
 import { inertJson, presentForModel, UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../src/code-tool/present";
@@ -39,7 +40,7 @@ async function run(executor: Executor, host: RunHost, allowed?: DataClass): Prom
   let clock = 0;
   const output = await runCodeTool(
     { script: "return 1;", project: "demo" },
-    { executor, hostFor: () => host, newRunId: () => "run-1", now: () => (clock += 5), ...(allowed ? { allowedDataClass: () => allowed } : {}) },
+    { executor, audit: auditLog(memoryAuditStore(), () => 0), hostFor: () => host, newRunId: () => "run-1", now: () => (clock += 5), ...(allowed ? { allowedDataClass: () => allowed } : {}) },
   );
   return codeToolOutputSchema.parse(output);
 }

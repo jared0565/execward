@@ -365,3 +365,53 @@ describe("the whole stack: code tool, Dynamic Worker, broker and policy table", 
     expect(calls).toEqual([]);
   });
 });
+
+describe("the audit log on a local D1 database", { timeout: 30_000 }, () => {
+  interface AuditReply {
+    written: number;
+    tamper: string[];
+    entries: { seq: number; kind: string; content: string | null; prevHash: string; hash: string }[];
+    chain: { ok: boolean; entries?: number; seq?: number };
+  }
+  const events = (count: number) => Array.from({ length: count }, (_unused, n) => ({ kind: "test", runId: `run-${n + 1}`, project: "demo", body: { n: n + 1 } }));
+  async function audit(body: unknown): Promise<AuditReply> {
+    const response = await worker.fetch("http://harness.invalid/audit", { method: "POST", body: JSON.stringify(body) });
+    return (await response.json()) as AuditReply;
+  }
+
+  it("appends entries in order and the chain verifies", async () => {
+    const reply = await audit({ events: events(4) });
+    expect(reply.written).toBe(4);
+    expect(reply.entries.map((entry) => entry.seq)).toEqual([1, 2, 3, 4]);
+    expect(reply.entries[1]?.prevHash).toBe(reply.entries[0]?.hash);
+    expect(reply.chain).toEqual({ ok: true, entries: 4 });
+  });
+
+  it("keeps the chain intact when several entries are written at once", async () => {
+    const reply = await audit({ events: events(4), together: true });
+    expect(reply.written).toBe(4);
+    expect(reply.entries.map((entry) => entry.seq)).toEqual([1, 2, 3, 4]);
+    expect(reply.chain).toEqual({ ok: true, entries: 4 });
+  });
+
+  it("refuses to change or delete a row, at the database itself", async () => {
+    const reply = await audit({
+      events: events(3),
+      tamper: [`UPDATE audit_log SET content = '{"n":999}' WHERE seq = 2`, "DELETE FROM audit_log WHERE seq = 2", "DELETE FROM audit_log"],
+    });
+    expect(reply.tamper.length).toBe(3);
+    for (const outcome of reply.tamper) expect(outcome).toContain("the audit log is append-only");
+    expect(reply.entries.length).toBe(3);
+    expect(reply.entries[1]?.content).toBe('{"n":2}');
+    expect(reply.chain).toEqual({ ok: true, entries: 3 });
+  });
+
+  it("detects an edit made by someone who removed the protection first", async () => {
+    const reply = await audit({
+      events: events(3),
+      tamper: ["DROP TRIGGER audit_log_no_update", `UPDATE audit_log SET content = '{"n":999}' WHERE seq = 2`],
+    });
+    expect(reply.tamper).toEqual(["ran", "ran"]);
+    expect(reply.chain).toMatchObject({ ok: false, seq: 2 });
+  });
+});
