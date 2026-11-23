@@ -12,7 +12,9 @@ import stateMigration from "../../migrations/0003_state.sql";
 import { d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, putProjectRecord, sweepQuotaCounters, type StateDatabase } from "../../src/storage/d1-stores";
 import { applyRetention, auditLog, d1AuditStore, deleteProjectLogs, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
 import { brokerHost } from "../../src/broker/broker";
-import { d1PolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
+import { d1PolicyStore, memoryPolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
+import { githubPinsAndPolicy, githubUpstream } from "../../src/connectors/github";
+import { registry } from "../../src/registry/registry";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
 
@@ -44,6 +46,13 @@ interface PolicyBody {
   readonly get?: string;
   readonly input?: unknown;
   readonly inputSchema?: unknown;
+  readonly allowedDataClass?: DataClass;
+}
+
+interface GithubBody {
+  readonly input?: unknown;
+  readonly configured?: boolean;
+  readonly writeProbe?: { readonly owner: string; readonly repo: string };
   readonly allowedDataClass?: DataClass;
 }
 
@@ -79,9 +88,51 @@ function scriptedHost(calls: { path: string; args: unknown }[]): RunHost {
 }
 
 export default {
-  async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like }): Promise<Response> {
+  async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like; GITHUB_TOKEN?: string }): Promise<Response> {
     const calls: { path: string; args: unknown }[] = [];
     const route = new URL(request.url).pathname;
+    if (route === "/github") {
+      // The GitHub connector behind the whole stack: code tool, sandbox, broker, pinned
+      // definitions and policy. The credential is this Worker's secret GITHUB_TOKEN; when it
+      // is not set, every call fails with "no credential".
+      const body = (await request.json()) as GithubBody;
+      const token = (): string | undefined => env.GITHUB_TOKEN;
+      if (body.configured) return Response.json({ configured: typeof env.GITHUB_TOKEN === "string" && env.GITHUB_TOKEN !== "" });
+      if (body.writeProbe) {
+        // Task 1.1.2: a write attempted with the credential must be refused by GitHub. The
+        // write is the least visible one there is: a blob nothing points to. Only the
+        // status comes back.
+        const { owner, repo } = body.writeProbe;
+        const held = token();
+        if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo) || !held) return Response.json({ error: "not usable" }, { status: 400 });
+        const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/blobs`, {
+          method: "POST",
+          redirect: "manual",
+          headers: { accept: "application/vnd.github+json", authorization: `Bearer ${held}`, "user-agent": "execward", "content-type": "application/json" },
+          body: JSON.stringify({ content: "execward write probe", encoding: "utf-8" }),
+        });
+        return Response.json({ status: response.status });
+      }
+      const { pins, records } = await githubPinsAndPolicy();
+      const pinned = registry({ pins, current: async (path) => pins.find((pin) => pin.path === path)?.definition });
+      const output = await runCodeTool(body.input, {
+        executor: dynamicWorkerExecutor(env.LOADER),
+        audit: auditLog(memoryAuditStore(), () => Date.now()),
+        hostFor: () =>
+          brokerHost({
+            store: memoryPolicyStore(records),
+            definitionFor: (record) => pinned.definitionFor(record),
+            docsFor: (path) => pinned.docsFor(path),
+            upstream: githubUpstream({ token, fetch: (url, init) => fetch(url, init) }),
+          }),
+        allowedDataClass: () => body.allowedDataClass ?? "confidential",
+        newRunId: () => "github-run",
+        now: () => Date.now(),
+      });
+      // Checked here, where the credential is known: it must be nowhere in what goes back.
+      const held = token();
+      return Response.json({ output, credentialInReply: held ? JSON.stringify(output).includes(held) : false });
+    }
     if (route === "/stores") {
       // The database-backed stores on the local D1 database. Each request starts from empty tables
       // and runs a list of operations, in order or all at once, returning each one's result.
