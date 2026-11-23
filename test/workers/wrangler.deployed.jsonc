@@ -1,0 +1,24 @@
+// The test Worker as deployed to Cloudflare. See deployed.ts.
+// Not the product: the production configuration is wrangler.jsonc at the repo root.
+//
+// Deploy:  npx wrangler deploy -c test/workers/wrangler.deployed.jsonc
+// It has a workers.dev address and refuses every request without the test
+// secret (a Worker secret named TEST_SECRET, never in this file).
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "execward-test",
+	"main": "deployed.ts",
+	"compatibility_date": "2026-11-13",
+	"compatibility_flags": [],
+	"workers_dev": true,
+	"preview_urls": false,
+	"send_metrics": false,
+	"observability": {
+		"enabled": true
+	},
+	"worker_loaders": [{ "binding": "LOADER" }],
+	// A database for the tests only. Tests drop and recreate its tables.
+	"d1_databases": [
+		{ "binding": "DB", "database_name": "execward-test", "database_id": "e0ec5608-b235-4059-816a-230d1be84317" }
+	]
+}
