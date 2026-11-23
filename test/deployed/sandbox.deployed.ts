@@ -183,3 +183,14 @@ describe("the stores on a deployed D1 database (FR-27)", { timeout: 60_000 }, ()
     expect(values(reply).filter((won) => won === true).length).toBe(1);
   });
 });
+
+describe("the sandbox on Cloudflare: names that cannot be a tool", { timeout: 60_000 }, () => {
+  it("makes no call when a script prints, serialises or awaits the tools object", async () => {
+    const reply = await run(
+      `const out = [];\nfor (const look of [() => String(tools), () => JSON.stringify(tools), () => typeof tools.then, () => typeof tools.toString]) { try { out.push(look()); } catch (error) { out.push("threw"); } }\n` +
+        `const awaited = await tools;\nreturn { out, same: awaited === tools };`,
+    );
+    expect(reply.outcome).toMatchObject({ status: "completed", result: { out: ["threw", "{}", "undefined", "undefined"], same: true } });
+    expect(reply.calls).toEqual([]);
+  });
+});

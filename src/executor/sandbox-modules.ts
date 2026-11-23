@@ -128,8 +128,14 @@ export class Code extends WorkerEntrypoint {
     let failedAssertion;
     let assertionsPassed = 0;
     const open = () => { if (failedAssertion) throw failedAssertion.error; };
+    // Every tool path is server_tool: letters, digits and underscores, with an underscore
+    // inside. A name of any other shape (toString, then, toJSON, constructor) cannot be a
+    // tool, so it is simply absent: printing or awaiting the tools object is a slip, not a
+    // call. A name of the right shape that is not approved still reaches the broker, which
+    // ends the run. (Owner's decision, 2026-11-23.)
+    const toolShaped = (path) => typeof path === "string" && path.length <= 200 && path.includes("_") && !path.startsWith("_") && !path.endsWith("_") && [...path].every((c) => c === "_" || (c >= "0" && c <= "9") || (c >= "a" && c <= "z") || (c >= "A" && c <= "Z")) && !(path[0] >= "0" && path[0] <= "9");
     const tools = new Proxy(Object.freeze({}), {
-      get: (_target, path) => (typeof path === "string" ? (args) => { open(); return host.callTool(path, args); } : undefined),
+      get: (_target, path) => (toolShaped(path) ? (args) => { open(); return host.callTool(path, args); } : undefined),
     });
     const search = (query) => { open(); return host.search(query); };
     const describe = (path) => { open(); return host.describe(path); };
