@@ -15,11 +15,12 @@
  */
 import type { ExecWardError } from "../contracts/errors";
 import { DATA_CLASSES, scriptMayCall, type DataClass, type PolicyRecord } from "../contracts/policy";
-import { CALL_LIMITS } from "../limits";
+import { CALL_LIMITS, CIRCUIT_BREAKER } from "../limits";
 import type { SandboxHost } from "../executor";
 import { pathAllowed, urlAllowed } from "./allowlists";
 import { checkAgainstSchema } from "./json-schema";
 import { effectivePolicy, pathOf, type PolicyStore } from "./policy-store";
+import { countCall, memoryQuotaStore, type QuotaContext } from "./quotas";
 
 /** The pinned definition of one wrapped tool. Pinning and its hash are task 1.5.4. */
 export interface ToolDefinition {
@@ -90,6 +91,13 @@ export interface BrokerHost extends SandboxHost {
 export interface BrokerDeps {
   readonly store: PolicyStore;
   readonly upstream: Upstream;
+  /**
+   * Where daily call counts are kept (FR-27). Left out, they are counted in
+   * memory for this run only, so production wiring must always pass it.
+   */
+  readonly quotas?: QuotaContext;
+  /** Upstream errors in a row before the run is ended. Defaults to `CIRCUIT_BREAKER`. */
+  readonly consecutiveUpstreamErrors?: number;
   /** The tool's definition, or `undefined` when there is none. No definition, no call. */
   readonly definitionFor: (record: PolicyRecord) => Promise<ToolDefinition | undefined>;
 }
@@ -153,11 +161,37 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     return copy;
   }
 
-  function deny(path: string, reason: string): never {
+  /** Ends the run on a security code (FR-41). Every later call is refused too. */
+  function end(code: "policy_denied" | "quota_exceeded" | "circuit_open", path: string, reason: string): never {
     denials.push({ path, reason });
     // The first refusal is the one reported; the message names the tool, never the arguments.
-    ended ??= { code: "policy_denied", message: `the call to "${path}" was refused: ${reason}` };
-    throw new Error(`policy_denied: ${reason}`);
+    ended ??= { code, message: `the call to "${path}" was refused: ${reason}` };
+    throw new Error(`${code}: ${reason}`);
+  }
+
+  function deny(path: string, reason: string): never {
+    return end("policy_denied", path, reason);
+  }
+
+  const quotas: QuotaContext = deps.quotas ?? { store: memoryQuotaStore(), project: "unknown", now: () => Date.now() };
+  const breakerLimit = deps.consecutiveUpstreamErrors ?? CIRCUIT_BREAKER.consecutiveUpstreamErrors;
+  const callsThisRun = new Map<string, number>();
+  let errorsInARow = 0;
+
+  /** Quotas on one call that has passed every policy check (FR-27). */
+  async function checkQuotas(path: string, record: PolicyRecord): Promise<void> {
+    const count = (callsThisRun.get(path) ?? 0) + 1;
+    callsThisRun.set(path, count);
+    const perRun = record.quotas.callsPerRun;
+    if (perRun !== undefined && count > perRun) end("quota_exceeded", path, `the tool's limit of ${perRun} calls in one run was reached`);
+    const over = await countCall(quotas, path, record.quotas.callsPerDay);
+    if (over !== undefined) end("quota_exceeded", path, over);
+  }
+
+  /** The circuit breaker (FR-27): a run that keeps failing upstream is ended, not left to retry for ever. */
+  function upstreamFailed(path: string): void {
+    errorsInARow++;
+    if (errorsInARow >= breakerLimit) end("circuit_open", path, `${errorsInARow} upstream errors in a row`);
   }
 
   function guard(path: string): void {
@@ -214,16 +248,27 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       }
       // Every URL found above is already on the tool's list; this counts them.
       checkDataFlow(path, record, args, checked.located.filter((found) => found.kind === "url").length);
+      await checkQuotas(path, record);
 
       let result: unknown;
       try {
         result = await deps.upstream({ record, args });
       } catch (cause) {
+        upstreamFailed(path);
         // The upstream's own words are untrusted text: passed to the script, cut short, and nothing more.
         const said = cause instanceof Error ? cause.message : String(cause);
         throw new Error(`upstream_error: ${said.length > 500 ? `${said.slice(0, 500)}...` : said}`, { cause });
       }
-      return accept(path, record, definition, result);
+      let accepted: unknown;
+      try {
+        accepted = accept(path, record, definition, result);
+      } catch (cause) {
+        // A result the broker had to reject is an upstream failure too.
+        upstreamFailed(path);
+        throw cause;
+      }
+      errorsInARow = 0;
+      return accepted;
     },
 
     async search(query) {
