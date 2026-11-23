@@ -188,6 +188,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     await deps.audit
       .record({
         kind: "run_refused",
+        security: isSecurity(error),
         runId,
         project: typeof project === "string" ? project.slice(0, 128) : "unknown",
         body: { scriptHash, script: typeof script === "string" ? script.slice(0, SCRIPT_LIMITS.maxScriptBytes) : null, error, security: isSecurity(error) },
@@ -247,6 +248,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     try {
       await deps.audit.record({
         kind: "run_finished",
+        security: isSecurity(error),
         runId,
         project: input.data.project,
         body: {

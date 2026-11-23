@@ -370,8 +370,11 @@ describe("the audit log on a local D1 database", { timeout: 30_000 }, () => {
   interface AuditReply {
     written: number;
     tamper: string[];
-    entries: { seq: number; kind: string; content: string | null; prevHash: string; hash: string }[];
+    entries: { seq: number; kind: string; project: string; content: string | null; prevHash: string; hash: string }[];
     chain: { ok: boolean; entries?: number; seq?: number };
+    retention?: { contentExpired: number; entriesRemoved: number };
+    erased?: number;
+    anchor: { seq: number; hash: string } | null;
   }
   const events = (count: number) => Array.from({ length: count }, (_unused, n) => ({ kind: "test", runId: `run-${n + 1}`, project: "demo", body: { n: n + 1 } }));
   async function audit(body: unknown): Promise<AuditReply> {
@@ -404,6 +407,64 @@ describe("the audit log on a local D1 database", { timeout: 30_000 }, () => {
     expect(reply.entries.length).toBe(3);
     expect(reply.entries[1]?.content).toBe('{"n":2}');
     expect(reply.chain).toEqual({ ok: true, entries: 3 });
+  });
+
+  it("applies retention: full text goes at 7 days, whole entries at 90, and the chain still verifies", async () => {
+    const reply = await audit({
+      events: [
+        { kind: "test", runId: "ancient", project: "demo", body: { n: 1 }, ageDays: 120 },
+        { kind: "test", runId: "old", project: "demo", body: { n: 2 }, ageDays: 30 },
+        { kind: "test", runId: "flagged", project: "demo", security: true, body: { n: 3 }, ageDays: 30 },
+        { kind: "test", runId: "fresh", project: "demo", body: { n: 4 }, ageDays: 1 },
+      ],
+      retention: true,
+    });
+    expect(reply.retention).toEqual({ contentExpired: 1, entriesRemoved: 1 });
+    expect(reply.entries.map((entry) => [entry.seq, entry.content])).toEqual([
+      [2, null],
+      [3, '{"n":3}'],
+      [4, '{"n":4}'],
+    ]);
+    expect(reply.anchor?.seq).toBe(1);
+    expect(reply.chain).toEqual({ ok: true, entries: 3 });
+  });
+
+  it("erases one project's logs on request and records that it did", async () => {
+    const reply = await audit({
+      events: [
+        { kind: "test", runId: "a", project: "acme", body: { n: 1 } },
+        { kind: "test", runId: "b", project: "other", body: { n: 2 } },
+      ],
+      eraseProject: "acme",
+    });
+    expect(reply.erased).toBe(1);
+    expect(reply.entries.map((entry) => [entry.project, entry.kind, entry.content])).toEqual([
+      ["acme", "test", null],
+      ["other", "test", '{"n":2}'],
+      ["acme", "project_logs_deleted", '{"entriesErased":1}'],
+    ]);
+    expect(reply.chain).toEqual({ ok: true, entries: 3 });
+  });
+
+  it("lets the database remove only the oldest entry, and only once it is past 90 days", async () => {
+    const reply = await audit({
+      events: [
+        { kind: "test", runId: "ancient", project: "demo", body: { n: 1 }, ageDays: 120 },
+        { kind: "test", runId: "old", project: "demo", body: { n: 2 }, ageDays: 100 },
+        { kind: "test", runId: "recent", project: "demo", body: { n: 3 }, ageDays: 10 },
+      ],
+      tamper: [
+        "DELETE FROM audit_log WHERE seq = 2",
+        "DELETE FROM audit_log WHERE seq = 3",
+        "UPDATE audit_log SET project = 'other' WHERE seq = 3",
+        "UPDATE audit_log SET security = 0, content = NULL WHERE seq = 3",
+        "UPDATE audit_log SET content = NULL WHERE seq = 3",
+        "DELETE FROM audit_log WHERE seq = 1",
+        "DELETE FROM audit_log WHERE seq = 3",
+      ],
+    });
+    expect(reply.tamper.map((outcome) => (outcome === "ran" ? "ran" : "refused"))).toEqual(["refused", "refused", "refused", "ran", "ran", "ran", "refused"]);
+    expect(reply.entries.map((entry) => entry.seq)).toEqual([2, 3]);
   });
 
   it("detects an edit made by someone who removed the protection first", async () => {
