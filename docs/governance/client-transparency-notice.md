@@ -95,4 +95,4 @@ You can ask me not to use AI tools on your work, or to limit which data they may
   in docs/decisions/1.4.4-retention.md. If a client needs faster complete deletion, that
   is a design change, not a wording change.
 - **Backups** are kept 7 days (docs/decisions/1.4.5-backups.md). The notice says so. If
-  the keep time changes, change the notice. The daily schedule is not running yet.
+  the keep time changes, change the notice.

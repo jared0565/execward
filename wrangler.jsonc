@@ -20,10 +20,30 @@
 	"observability": {
 		"enabled": true
 	},
-	// The only binding: the Worker Loader that runs a script in a Dynamic Worker.
+	// The Worker Loader that runs a script in a Dynamic Worker.
 	"worker_loaders": [
 		{
 			"binding": "LOADER"
 		}
-	]
+	],
+	// The Worker's own database. Migrations: npx wrangler d1 migrations apply execward --remote
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "execward",
+			"database_id": "33b54ace-0649-4949-abe5-dacd833dfe10",
+			"migrations_dir": "migrations"
+		}
+	],
+	// Where the daily backup of that database is written (task 1.4.5).
+	"r2_buckets": [
+		{
+			"binding": "BACKUPS",
+			"bucket_name": "execward-backups"
+		}
+	],
+	// The housekeeping timer: every five minutes (src/worker/scheduled.ts).
+	"triggers": {
+		"crons": ["*/5 * * * *"]
+	}
 }

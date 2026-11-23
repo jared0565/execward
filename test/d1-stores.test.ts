@@ -292,3 +292,48 @@ describe("backup to a bucket and restore (task 1.4.5)", { timeout: 120_000 }, ()
     expect((await backup({ restoreTwice: true })).restored).toEqual({ error: 'BackupError: the table "policy" is not empty' });
   });
 });
+
+describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout: 120_000 }, () => {
+  const DAY = 86_400_000;
+  const MORNING = Date.UTC(2027, 0, 15, 0, 5);
+  interface TimerReply {
+    readonly runs: { frequent: { job: string; ok: boolean; detail: string }[]; daily?: { job: string; ok: boolean; detail: string }[]; backup?: { key?: string; error?: string; rows?: Record<string, number> } }[];
+    readonly keys: string[];
+    readonly kinds: string[];
+    readonly oldTextRemoved: boolean;
+    readonly chain: { ok: boolean };
+    readonly escalationStatuses: string[];
+  }
+  async function timer(body: Record<string, unknown>): Promise<TimerReply> {
+    const response = await worker.fetch("http://harness.invalid/scheduled", { method: "POST", body: JSON.stringify(body) });
+    return (await response.json()) as TimerReply;
+  }
+
+  it("does the daily round once a day, at the first firing, and only the frequent round after that", async () => {
+    const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000, MORNING + 10 * 60_000, MORNING + DAY] });
+    expect(reply.runs.map((run) => run.daily !== undefined)).toEqual([true, false, false, true]);
+    expect(reply.runs[0]?.daily?.map((job) => job.job)).toEqual(["apply_retention", "sweep_counters"]);
+    expect(reply.runs[0]?.backup).toMatchObject({ key: "backups/2027-01-15.json" });
+    expect(reply.keys).toEqual(["backups/2027-01-15.json", "backups/2027-01-16.json"]);
+    // Each daily round is recorded. A frequent round that did nothing is not.
+    expect(reply.kinds).toEqual(["maintenance", "maintenance"]);
+    expect(reply.chain).toMatchObject({ ok: true });
+  });
+
+  it("applies retention and closes an expired escalation, and records what it did", async () => {
+    const reply = await timer({ times: [MORNING], oldEntryDays: 8, expiredEscalation: true });
+    expect(reply.runs[0]?.frequent).toEqual([{ job: "expire_escalations", ok: true, detail: "1 closed" }]);
+    expect(reply.runs[0]?.daily?.[0]).toMatchObject({ job: "apply_retention", ok: true });
+    expect(reply.oldTextRemoved).toBe(true);
+    expect(reply.escalationStatuses).toEqual(["expired"]);
+    expect(reply.kinds.at(-1)).toBe("maintenance");
+    expect(reply.chain).toMatchObject({ ok: true });
+  });
+
+  it("tries the daily round again at the next firing when the backup failed", async () => {
+    const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000], brokenBucket: true });
+    expect(reply.runs.map((run) => run.backup)).toEqual([{ error: "the bucket refused the write" }, { error: "the bucket refused the write" }]);
+    expect(reply.keys).toEqual([]);
+    expect(reply.kinds).toEqual(["maintenance", "maintenance"]);
+  });
+});

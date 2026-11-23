@@ -16,6 +16,8 @@ import { brokerHost } from "../../src/broker/broker";
 import { d1PolicyStore, memoryPolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
 import { githubPinsAndPolicy, githubUpstream } from "../../src/connectors/github";
 import { registry } from "../../src/registry/registry";
+import { escalationQueue } from "../../src/console/escalations";
+import { runScheduled } from "../../src/worker/scheduled";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
 
@@ -60,6 +62,16 @@ interface BackupBody {
   readonly restoreTwice?: boolean;
 }
 
+interface ScheduledBody {
+  /** The times the timer fires at, in order. */
+  readonly times: readonly number[];
+  /** Write one audit entry this many days before the first firing. */
+  readonly oldEntryDays?: number;
+  /** Raise an escalation a day before the first firing, so that it is past its time limit. */
+  readonly expiredEscalation?: boolean;
+  readonly brokenBucket?: boolean;
+}
+
 interface GithubBody {
   readonly input?: unknown;
   readonly configured?: boolean;
@@ -102,7 +114,7 @@ export default {
   async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like; GITHUB_TOKEN?: string; BACKUPS?: BackupBucket }): Promise<Response> {
     const calls: { path: string; args: unknown }[] = [];
     const route = new URL(request.url).pathname;
-    if (route === "/backup") {
+    if (route === "/backup" || route === "/scheduled") {
       // Task 1.4.5: fill a database, back it up to the bucket, empty the database, restore, and compare.
       const body = (await request.json()) as BackupBody;
       const bucket = env.BACKUPS;
@@ -126,6 +138,32 @@ export default {
         if (!page.truncated) break;
       }
       await freshTables();
+
+      if (route === "/scheduled") {
+        // The production Worker's timer, fired at each of the given times against this database and bucket.
+        const timer = body as unknown as ScheduledBody;
+        const first = timer.times[0] ?? Date.now();
+        const store = d1AuditStore(db);
+        if (timer.oldEntryDays !== undefined) {
+          await auditLog(store, () => first - timer.oldEntryDays! * 86_400_000).record({ kind: "test", runId: "old-run", project: "work", body: { text: "old text" } });
+        }
+        if (timer.expiredEscalation) {
+          const queue = escalationQueue({ store: d1EscalationStore(db), control: d1ControlStore(db), audit: auditLog(store, () => first - 86_400_000), now: () => first - 86_400_000, newId: () => "expiredItem0123456789" });
+          await queue.raise({ trigger: "repeated_failure", project: "work", runId: "run-1" });
+        }
+        let ids = 0;
+        const runs = [];
+        for (const at of timer.times) runs.push(await runScheduled({ DB: env.DB, BACKUPS: timer.brokenBucket ? { ...bucket, put: async () => Promise.reject(new Error("the bucket refused the write")) } : bucket }, at, () => `id-${++ids}`));
+        const entries = await store.all();
+        return Response.json({
+          runs,
+          keys: (await bucket.list({ prefix: "" })).objects.map((object) => object.key).sort(),
+          kinds: entries.map((entry) => entry.kind),
+          oldTextRemoved: entries[0]?.content === null,
+          chain: await verifyChain(entries, (await store.anchor()) ?? undefined),
+          escalationStatuses: (await d1EscalationStore(db).all()).map((item) => item.status),
+        });
+      }
 
       // Something in every table.
       const { records } = await githubPinsAndPolicy();
