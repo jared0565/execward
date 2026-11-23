@@ -95,7 +95,7 @@ describe("checking arguments against a tool's input schema (FR-34)", () => {
       null,
     ]) {
       expect(schemaProblems(schema).length, JSON.stringify(schema)).toBeGreaterThan(0);
-      expect(problems({}, schema)[0], JSON.stringify(schema)).toContain("the tool's input schema cannot be enforced");
+      expect(problems({}, schema)[0], JSON.stringify(schema)).toContain("the tool's schema cannot be enforced");
     }
     expect(schemaProblems(ISSUE_SCHEMA)).toEqual([]);
   });
@@ -247,7 +247,7 @@ describe("the broker checks arguments before a call goes out (FR-34)", () => {
     expect(none.upstreamCalls).toEqual([]);
 
     const unusable = setup({ type: "object", $ref: "#/x" });
-    await expect(unusable.host.callTool("github_get_file", {})).rejects.toThrow("schema_invalid: the tool's input schema cannot be enforced");
+    await expect(unusable.host.callTool("github_get_file", {})).rejects.toThrow("schema_invalid: the tool's schema cannot be enforced");
     expect(unusable.upstreamCalls).toEqual([]);
   });
 });

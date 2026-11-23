@@ -129,7 +129,14 @@ export function schemaProblems(schema: unknown, at = "schema", depth = 0): strin
   return problems;
 }
 
-function check(value: unknown, schema: JsonSchema, at: string, depth: number, out: { problems: string[]; located: LocatedValue[] }): void {
+interface Collected {
+  problems: string[];
+  located: LocatedValue[];
+  /** Arguments are strict about unlisted fields; results follow the standard. */
+  readonly unlistedFields: "refuse" | "allow";
+}
+
+function check(value: unknown, schema: JsonSchema, at: string, depth: number, out: Collected): void {
   if (out.problems.length >= MAX_PROBLEMS) return;
   if (depth > MAX_DEPTH) {
     out.problems.push(`${at}: nested too deeply`);
@@ -140,7 +147,7 @@ function check(value: unknown, schema: JsonSchema, at: string, depth: number, ou
     // The value must satisfy at least one branch; that branch's URLs and paths are the ones collected.
     const passing = (schema.anyOf as JsonSchema[])
       .map((branch) => {
-        const attempt = { problems: [] as string[], located: [] as LocatedValue[] };
+        const attempt: Collected = { problems: [], located: [], unlistedFields: out.unlistedFields };
         check(value, branch, at, depth + 1, attempt);
         return attempt;
       })
@@ -198,16 +205,21 @@ function check(value: unknown, schema: JsonSchema, at: string, depth: number, ou
       if (Object.hasOwn(properties, name)) check(child, properties[name] as JsonSchema, where, depth + 1, out);
       else if (isRecord(schema.additionalProperties)) check(child, schema.additionalProperties, where, depth + 1, out);
       // Strict by default: only an explicit `additionalProperties: true` lets an unlisted field through.
-      else if (schema.additionalProperties !== true) out.problems.push(`${at === "" ? "arguments" : at}: the field "${name}" is not allowed`);
+      else if (schema.additionalProperties === false || (schema.additionalProperties !== true && out.unlistedFields === "refuse")) out.problems.push(`${at === "" ? "arguments" : at}: the field "${name}" is not allowed`);
     }
   }
 }
 
-/** Checks `value` against `schema`. A schema with problems of its own fails every value. */
-export function checkAgainstSchema(value: unknown, schema: unknown): SchemaCheck {
+/**
+ * Checks `value` against `schema`. A schema with problems of its own fails every value.
+ *
+ * `unlistedFields` is "refuse" for arguments, which ExecWard's own caller writes,
+ * and "allow" for results, where an upstream adding a field is not an attack.
+ */
+export function checkAgainstSchema(value: unknown, schema: unknown, unlistedFields: "refuse" | "allow" = "refuse"): SchemaCheck {
   const unusable = schemaProblems(schema);
-  if (unusable.length > 0) return { problems: [`the tool's input schema cannot be enforced (${unusable[0]})`], located: [] };
-  const out = { problems: [] as string[], located: [] as LocatedValue[] };
+  if (unusable.length > 0) return { problems: [`the tool's schema cannot be enforced (${unusable[0]})`], located: [] };
+  const out: Collected = { problems: [], located: [], unlistedFields };
   check(value, schema as JsonSchema, "", 0, out);
   return { problems: out.problems.map((problem) => (problem.startsWith(":") ? `arguments${problem}` : problem)), located: out.located };
 }
