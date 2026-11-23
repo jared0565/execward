@@ -41,6 +41,14 @@ export interface CodeToolDeps {
    * Left out, it is `public`: the most cautious answer. Task 1.3.7 sets it per project.
    */
   readonly allowedDataClass?: (project: string) => DataClass;
+  /**
+   * Run admission: per-project quotas and spend caps (FR-27). A run is admitted
+   * before it starts and released when it ends, however it ends.
+   */
+  readonly admission?: {
+    admit(run: { readonly runId: string; readonly project: string; readonly wallClockMs: number }): Promise<ExecWardError | undefined>;
+    release(run: { readonly runId: string; readonly project: string }): Promise<void>;
+  };
 }
 
 /** What is returned in place of content that was withheld (FR-36). */
@@ -142,6 +150,18 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     return refused({ code: "schema_invalid", message: `the input does not match the code tool's contract: ${describeIssues(input.error.issues)}` });
   }
 
+  const admitted = { runId, project: input.data.project };
+  if (deps.admission) {
+    let over: ExecWardError | undefined;
+    try {
+      over = await deps.admission.admit({ ...admitted, wallClockMs: limits.wallClockMs });
+    } catch {
+      // Fail closed: no answer from the quota service is a refusal.
+      over = { code: "quota_exceeded", message: "the quota service is unavailable" };
+    }
+    if (over) return refused(over);
+  }
+
   let output: CodeToolOutput;
   try {
     const host = deps.hostFor({ runId, project: input.data.project });
@@ -201,6 +221,8 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     // An executor must not throw; if one does, that is a sandbox fault. Nothing is run another way.
     const error: ExecWardError = { code: "sandbox_fault", message: `the executor failed: ${cause instanceof Error ? cause.message : String(cause)}` };
     return { status: "error", error, report: report([error]) };
+  } finally {
+    await deps.admission?.release(admitted).catch(() => undefined);
   }
 
   // Never send a reply the contract does not describe.
