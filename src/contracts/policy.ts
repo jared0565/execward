@@ -28,8 +28,16 @@ export const policyRecordSchema = z.strictObject({
   sensitive: z.boolean(),
   /** Can send data outside: email, public post, external write (FR-29). */
   outbound: z.boolean(),
-  /** Destinations an outbound tool may reach. Starts empty. */
+  /**
+   * Hosts a URL argument may name, and destinations an outbound tool may reach.
+   * Starts empty, and empty allows nothing (FR-34).
+   */
   destinationAllowlist: z.array(z.string().min(1)),
+  /**
+   * Folders or files a path argument may name (contract 1.3.0, FR-34).
+   * Absent or empty allows nothing.
+   */
+  pathAllowlist: z.array(z.string().min(1)).optional(),
   /** Per-tool quotas. Omitted values fall back to the project quotas. */
   quotas: z.strictObject({
     callsPerRun: z.number().int().positive().optional(),

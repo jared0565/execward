@@ -17,6 +17,7 @@ interface PolicyBody {
   readonly noTable?: boolean;
   readonly get?: string;
   readonly input?: unknown;
+  readonly inputSchema?: unknown;
 }
 
 interface RunBody {
@@ -78,6 +79,7 @@ export default {
         hostFor: () =>
           brokerHost({
             store,
+            definitionFor: async () => ({ description: "test tool", inputSchema: body.inputSchema ?? { type: "object", additionalProperties: true } }),
             upstream: async ({ record, args }) => {
               calls.push({ path: `${record.server}/${record.tool}`, args });
               return { from: record.tool, args };

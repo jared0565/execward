@@ -334,6 +334,31 @@ describe("the whole stack: code tool, Dynamic Worker, broker and policy table", 
     expect(calls.length).toBe(1);
   });
 
+  const FILES = {
+    records: [record("get_file", { pathAllowlist: ["docs/"] })],
+    inputSchema: { type: "object", properties: { path: { type: "string", format: "path" } }, required: ["path"] },
+  };
+
+  it("lets a script catch a schema error, fix its arguments and carry on", async () => {
+    const { output, calls } = await brokered(
+      `let note;\ntry { await tools.github_get_file({ path: 7, debug: true }); } catch (error) { note = error.message; }\n` +
+        `const file = await tools.github_get_file({ path: "docs/a.md" });\nreturn { note, from: file.from };`,
+      FILES,
+    );
+    expect(output).toMatchObject({ status: "completed", result: { from: "get_file" } });
+    if (output.status === "completed") expect((output.result as { note: string }).note).toContain("schema_invalid: path: expected string, got integer");
+    expect(calls).toEqual([{ path: "github/get_file", args: { path: "docs/a.md" } }]);
+  });
+
+  it("ends the run when a script reaches for a path off the allowlist", async () => {
+    const { output, calls } = await brokered(`try { return await tools.github_get_file({ path: "docs/../.env" }); } catch { return "hidden"; }`, FILES);
+    expect(output).toMatchObject({
+      status: "error",
+      error: { code: "policy_denied", message: 'the call to "github_get_file" was refused: the path in "path" is not on the tool\'s allowlist' },
+    });
+    expect(calls).toEqual([]);
+  });
+
   it("denies every call when the policy table is missing", async () => {
     const { output, calls } = await brokered(`return await tools.github_list_issues({});`, { noTable: true });
     expect(output).toMatchObject({ status: "error", error: { code: "policy_denied", message: 'the call to "github_list_issues" was refused: the policy table is unavailable' } });

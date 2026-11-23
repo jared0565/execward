@@ -17,7 +17,16 @@ import type { ExecWardError } from "../contracts/errors";
 import type { PolicyRecord } from "../contracts/policy";
 import { scriptMayCall } from "../contracts/policy";
 import type { SandboxHost } from "../executor";
+import { pathAllowed, urlAllowed } from "./allowlists";
+import { checkAgainstSchema } from "./json-schema";
 import { effectivePolicy, pathOf, type PolicyStore } from "./policy-store";
+
+/** The pinned definition of one wrapped tool. Pinning and its hash are task 1.5.4. */
+export interface ToolDefinition {
+  readonly description: string;
+  /** JSON Schema for the tool's arguments. */
+  readonly inputSchema: unknown;
+}
 
 /** Carries one allowed call to the wrapped tool. The MCP client, once it exists. */
 export type Upstream = (call: { readonly record: PolicyRecord; readonly args: unknown }) => Promise<unknown>;
@@ -37,6 +46,8 @@ export interface BrokerHost extends SandboxHost {
 export interface BrokerDeps {
   readonly store: PolicyStore;
   readonly upstream: Upstream;
+  /** The tool's definition, or `undefined` when there is none. No definition, no call. */
+  readonly definitionFor: (record: PolicyRecord) => Promise<ToolDefinition | undefined>;
 }
 
 /** Builds the broker for one run. Never shared between runs. */
@@ -75,6 +86,27 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       if (!policy.classified || record === undefined) deny(path, "the tool has no policy record");
       if (!scriptMayCall(policy)) deny(path, "the tool may only be called directly, not from a script");
       if (policy.tier !== 0) deny(path, `tier ${policy.tier} tools cannot be called from a script yet`);
+
+      let definition: ToolDefinition | undefined;
+      try {
+        definition = await deps.definitionFor(record);
+      } catch {
+        return deny(path, "the tool's definition is unavailable");
+      }
+      if (definition === undefined) deny(path, "the tool has no definition to check its arguments against");
+
+      // FR-34. A call with no arguments is checked as an empty object.
+      const checked = checkAgainstSchema(args === undefined ? {} : args, definition.inputSchema);
+      if (checked.problems.length > 0) {
+        // The script's own mistake, which it may catch and fix: not a security refusal.
+        throw new Error(`schema_invalid: ${checked.problems.slice(0, 3).join("; ")}`);
+      }
+      for (const found of checked.located) {
+        const allowed =
+          found.kind === "url" ? urlAllowed(found.value, record.destinationAllowlist) : pathAllowed(found.value, record.pathAllowlist ?? []);
+        // Reaching outside the allowlist is a security refusal. The value itself is not repeated.
+        if (!allowed) deny(path, `the ${found.kind === "url" ? "URL" : "path"} in "${found.at}" is not on the tool's allowlist`);
+      }
       return deps.upstream({ record, args });
     },
 
