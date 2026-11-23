@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { auditLog, memoryAuditStore } from "../src/audit/log";
 import { brokerHost, type Upstream } from "../src/broker/broker";
 import { effectivePolicy, memoryPolicyStore, pathOf, PolicyStoreError, type PolicyStore } from "../src/broker/policy-store";
 import { runCodeTool } from "../src/code-tool/run";
@@ -138,7 +139,7 @@ describe("a refusal ends the run at the code tool (FR-41)", () => {
     let clock = 0;
     const output = await runCodeTool(
       { script: "return 1;", project: "demo" },
-      { executor, hostFor: () => host, newRunId: () => "run-1", now: () => (clock += 10) },
+      { executor, audit: auditLog(memoryAuditStore(), () => 0), hostFor: () => host, newRunId: () => "run-1", now: () => (clock += 10) },
     );
     expect(output).toMatchObject({
       status: "error",

@@ -59,7 +59,7 @@ const BLOCKED_GLOBALS: Readonly<Record<string, string>> = {
  * Shapes of well-known credentials. A script has no reason to hold one, and a
  * script is stored in the audit log. Matching is by shape only.
  */
-const SECRET_PATTERNS: readonly { readonly name: string; readonly pattern: RegExp }[] = [
+export const SECRET_PATTERNS: readonly { readonly name: string; readonly pattern: RegExp }[] = [
   { name: "a GitHub token", pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}/ },
   { name: "a GitHub fine-grained token", pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}/ },
   { name: "an AWS access key", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
