@@ -188,6 +188,7 @@ describe("the code tool with every control in place", () => {
       audit,
       upstream: async ({ record: called }) => (upstreamCalls.push(called.tool), { from: called.tool, text: "CANARY-client-file" }),
       definitionFor: async () => ({ description: "t", inputSchema: { type: "object", additionalProperties: true } }),
+      docsFor: async () => undefined,
       now: () => 1_800_000_000_000,
       newRunId: () => `run-${++run}`,
       ...overrides,

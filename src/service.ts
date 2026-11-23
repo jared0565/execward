@@ -25,6 +25,8 @@ export interface CodeToolServiceDeps {
   readonly audit: AuditStore;
   readonly upstream: Upstream;
   readonly definitionFor: (record: PolicyRecord) => Promise<ToolDefinition | undefined>;
+  /** Typed docs for `describe()`. Both this and `definitionFor` come from the registry. */
+  readonly docsFor: (path: string) => Promise<{ readonly typing: string } | undefined>;
   readonly now: () => number;
   readonly newRunId: () => string;
   /** Only tests pass this. Production uses `CLIENT_DATA_GATE`. */
@@ -72,6 +74,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
           store: deps.policy,
           upstream: deps.upstream,
           definitionFor: deps.definitionFor,
+          docsFor: deps.docsFor,
           quotas: quotaContext(run.project),
           // Resolved before the first call is forwarded; a failure refuses every call.
           maxDataClass: exposure(run.project).then((found) => found.allowed),

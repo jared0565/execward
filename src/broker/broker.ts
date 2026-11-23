@@ -17,6 +17,7 @@ import type { ExecWardError } from "../contracts/errors";
 import { DATA_CLASSES, scriptMayCall, type DataClass, type PolicyRecord } from "../contracts/policy";
 import { CALL_LIMITS, CIRCUIT_BREAKER } from "../limits";
 import type { SandboxHost } from "../executor";
+import { DefinitionChangedError } from "../registry/definition";
 import { pathAllowed, urlAllowed } from "./allowlists";
 import { checkAgainstSchema } from "./json-schema";
 import { effectivePolicy, pathOf, type PolicyStore } from "./policy-store";
@@ -98,6 +99,8 @@ export interface BrokerDeps {
   readonly quotas?: QuotaContext;
   /** Upstream errors in a row before the run is ended. Defaults to `CIRCUIT_BREAKER`. */
   readonly consecutiveUpstreamErrors?: number;
+  /** Typed docs for one tool path, for `describe()` (FR-3). */
+  readonly docsFor?: (path: string) => Promise<{ readonly typing: string } | undefined>;
   /**
    * The highest data class this run may handle (FR-32, FR-38). A tool above
    * it is hidden from search and describe and refused when called. If it is a
@@ -169,7 +172,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
   }
 
   /** Ends the run on a security code (FR-41). Every later call is refused too. */
-  function end(code: "policy_denied" | "quota_exceeded" | "circuit_open", path: string, reason: string): never {
+  function end(code: "policy_denied" | "quota_exceeded" | "circuit_open" | "definition_changed", path: string, reason: string): never {
     denials.push({ path, reason });
     // The first refusal is the one reported; the message names the tool, never the arguments.
     ended ??= { code, message: `the call to "${path}" was refused: ${reason}` };
@@ -253,7 +256,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       let definition: ToolDefinition | undefined;
       try {
         definition = await deps.definitionFor(record);
-      } catch {
+      } catch (cause) {
+        // FR-22: a tool that no longer matches its pin is blocked, and says so.
+        if (cause instanceof DefinitionChangedError) return end("definition_changed", path, cause.message);
         return deny(path, "the tool's definition is unavailable");
       }
       if (definition === undefined) deny(path, "the tool has no definition to check its arguments against");
@@ -320,7 +325,13 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         // Not a security event: asking about a name is not an attempt to use it.
         throw new Error(`no tool named "${path}" is available to scripts`);
       }
-      return { path, server: record.server, tool: record.tool, tier: record.tier, dataClass: record.dataClass };
+      let docs: { readonly typing: string } | undefined;
+      try {
+        docs = await deps.docsFor?.(path);
+      } catch {
+        docs = undefined;
+      }
+      return { path, server: record.server, tool: record.tool, tier: record.tier, dataClass: record.dataClass, ...(docs ? { typing: docs.typing } : {}) };
     },
   };
 }
