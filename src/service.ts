@@ -12,6 +12,7 @@ import { brokerHost, type ToolDefinition, type Upstream } from "./broker/broker"
 import { exposureFor, type Exposure, type Gate, type ProjectStore, CLIENT_DATA_GATE } from "./broker/exposure";
 import type { PolicyStore } from "./broker/policy-store";
 import { admitRun, releaseRun, type QuotaStore } from "./broker/quotas";
+import type { AttemptGate } from "./code-tool/attempts";
 import { runCodeTool } from "./code-tool/run";
 import type { CodeToolOutput } from "./contracts/code-tool";
 import type { PolicyRecord } from "./contracts/policy";
@@ -40,6 +41,11 @@ export interface CallerContext {
    * body. Anything unrecognised counts as the unknown route.
    */
   readonly providerRoute: unknown;
+  /**
+   * The retry count of the task this call belongs to (FR-41). The adapter
+   * makes one per task with `attemptGate()` and passes the same one each time.
+   */
+  readonly attempts: AttemptGate;
 }
 
 export type CodeToolService = (rawInput: unknown, caller: CallerContext) => Promise<CodeToolOutput>;
@@ -64,6 +70,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       audit,
       now: deps.now,
       newRunId: deps.newRunId,
+      attempts: caller.attempts,
       exposure,
       admission: {
         admit: (run) => admitRun(quotaContext(run.project), run.runId, run.wallClockMs),
