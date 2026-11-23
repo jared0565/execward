@@ -15,6 +15,7 @@ import { BACKUP_TABLES, backUp, restore, type BackupBucket, type BackupDatabase 
 import { brokerHost } from "../../src/broker/broker";
 import { d1PolicyStore, memoryPolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
 import { githubPinsAndPolicy, githubUpstream } from "../../src/connectors/github";
+import { outboundFetch } from "../../src/net/outbound";
 import { approve, registry, type Pin } from "../../src/registry/registry";
 import { githubFixtureBackend } from "../../src/eval/fixtures/github-backend";
 import { buildWorld } from "../../src/eval/fixtures/world";
@@ -343,7 +344,8 @@ export default {
             store: memoryPolicyStore(records),
             definitionFor: (record) => pinned.definitionFor(record),
             docsFor: (path) => pinned.docsFor(path),
-            upstream: githubUpstream({ token, fetch: (url, init) => fetch(url, init) }),
+            // The guarded fetch: named hosts only, as production must use (task 1.1.6).
+            upstream: githubUpstream({ token, fetch: outboundFetch() }),
           }),
         allowedDataClass: () => body.allowedDataClass ?? "confidential",
         newRunId: () => "github-run",
