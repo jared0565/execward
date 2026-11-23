@@ -135,7 +135,7 @@ Exit: Gate 1. Security first: every P0 security requirement in place, the advers
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 1.7.1 | Return the run report beside every result | FR-39 | 1.4.1 | The report lists calls by tool, records read and written, errors, retries, assertions, side effects and the verification outcome | P0 | Not started |
+| 1.7.1 | Return the run report beside every result | FR-39 | 1.4.1 | The report lists calls by tool, records read and written, errors, retries, assertions, side effects and the verification outcome. 2026-11-23: done. The report was already returned with every reply; this task closed three gaps: failed calls a script caught are now listed, the report is written to the audit log as returned, and a failed call's path is not named when content is being withheld. Retries stay 0 until 1.7.3 and verification stays `not_applicable` until 1.7.4. See docs/decisions/1.7.1-run-report.md | P0 | Done |
 | 1.7.2 | Reconcile the model's summary against the run report in the in-app adapter | FR-39 | 1.7.1, 1.9.2 | A summary with a wrong number is flagged | P0 | Not started |
 | 1.7.3 | Return failed checks to the model for up to two retries, and never retry a security failure | FR-41 | 1.7.1 | A policy denial escalates at once with no retry; a third attempt is refused | P0 | Not started |
 | 1.7.4 | Add the release gate with deterministic checks | FR-47; FR-48 (unreviewed marking) | 1.7.1 | A failing output is not handed over; output with no reviewer is marked unreviewed | P0 | Not started |

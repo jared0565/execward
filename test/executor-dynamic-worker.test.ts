@@ -361,7 +361,7 @@ describe("the whole stack: code tool, Dynamic Worker, broker and policy table", 
 
   it("denies every call when the policy table is missing", async () => {
     const { output, calls } = await brokered(`return await tools.github_list_issues({});`, { noTable: true });
-    expect(output).toMatchObject({ status: "error", error: { code: "policy_denied", message: 'the call to "github_list_issues" was refused: the policy table is unavailable' } });
+    expect(output).toMatchObject({ status: "error", error: { code: "policy_denied", message: "a call was refused: the policy table is unavailable" } });
     expect(calls).toEqual([]);
   });
 });
