@@ -13,10 +13,17 @@ import type { ExecutionFailureKind, ExecutionLimits, Executor, SandboxHost } fro
 import { RUN_LIMITS } from "../limits";
 import { checkScript } from "../static-check/check";
 
+/**
+ * The script's way out for one run. A host that refuses a call on security
+ * grounds reports it through `securityError`; the run then ends with that
+ * error whatever the script did next (FR-41).
+ */
+export type RunHost = SandboxHost & { securityError?(): ExecWardError | undefined };
+
 export interface CodeToolDeps {
   readonly executor: Executor;
-  /** Builds the script's way out for one run. The broker, once it exists. */
-  readonly hostFor: (run: { readonly runId: string; readonly project: string }) => SandboxHost;
+  /** Builds the script's way out for one run: the broker. */
+  readonly hostFor: (run: { readonly runId: string; readonly project: string }) => RunHost;
   readonly newRunId: () => string;
   /** Milliseconds; injected so tests are exact. */
   readonly now: () => number;
@@ -113,15 +120,21 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
 
   let output: CodeToolOutput;
   try {
+    const host = deps.hostFor({ runId, project: input.data.project });
     const outcome = await deps.executor.execute({
       runId,
       script: input.data.script,
       limits,
-      host: countingHost(deps.hostFor({ runId, project: input.data.project }), callsByTool),
+      host: countingHost(host, callsByTool),
     });
     const logs = outcome.logs.length > 0 ? { logs: [...outcome.logs] } : {};
     assertionsPassed = outcome.assertionsPassed ?? 0;
-    if (outcome.status === "completed") {
+    const securityError = host.securityError?.();
+    if (securityError) {
+      // A refused call ends the run. The script's own result or error is not
+      // returned: a script must not learn more by catching the refusal.
+      output = { status: "error", error: securityError, report: report([securityError]) };
+    } else if (outcome.status === "completed") {
       output = {
         status: "completed",
         result: outcome.truncated ? truncationNotice(outcome.result, limits.maxResultBytes) : outcome.result,

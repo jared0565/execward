@@ -11,6 +11,7 @@ import { unstable_startWorker } from "wrangler";
 import { codeToolOutputSchema, type CodeToolOutput } from "../src/contracts/code-tool";
 import type { ExecutionLimits, ExecutionOutcome } from "../src/executor";
 import { LANGUAGE_BUILTINS, SANDBOX_GLOBALS } from "../src/contracts/sandbox-api";
+import { record } from "./fixtures/policy";
 
 interface Reply {
   readonly outcome: ExecutionOutcome;
@@ -260,5 +261,82 @@ throw new TypeError("bad shape");`, project: "demo" });
     const { output } = await codeTool({ script: `return "x".repeat(100000);`, project: "demo" });
     expect(output).toMatchObject({ status: "completed", truncated: true });
     if (output.status === "completed") expect((output.result as { notice: string }).notice).toContain("Return less");
+  });
+});
+
+describe("the policy table on a local D1 database", { timeout: 30_000 }, () => {
+  type Read = { value?: unknown; error?: string };
+  async function policy(body: unknown): Promise<{ got: Read; list: Read }> {
+    const response = await worker.fetch("http://harness.invalid/policy", { method: "POST", body: JSON.stringify(body) });
+    return (await response.json()) as { got: Read; list: Read };
+  }
+
+  it("stores and returns records, and returns nothing for a tool with no record", async () => {
+    const records = [record("list_issues"), record("delete_repo", { callerRule: "direct", tier: 2 })];
+    const found = await policy({ records, get: "github_delete_repo" });
+    expect(found.got).toEqual({ value: records[1] });
+    // Listed in path order.
+    expect(found.list).toEqual({ value: [records[1], records[0]] });
+    expect((await policy({ records, get: "github_unknown" })).got).toEqual({ value: null });
+  });
+
+  it("replaces a record written twice", async () => {
+    const found = await policy({ records: [record("list_issues"), record("list_issues", { tier: 2 })], get: "github_list_issues" });
+    expect(found.got).toMatchObject({ value: { tier: 2 } });
+  });
+
+  it.each([
+    ["is not JSON", "{oops"],
+    ["does not match the contract", JSON.stringify({ ...record("list_issues"), tier: 9 })],
+    ["has an unknown field", JSON.stringify({ ...record("list_issues"), callerRule: "both", note: "trust me" })],
+    ["is for a different tool", JSON.stringify(record("delete_repo", { callerRule: "both", tier: 0 }))],
+  ])("refuses to read a stored row that %s", async (_label, raw) => {
+    const found = await policy({ rawRows: [{ path: "github_list_issues", record: raw }], get: "github_list_issues" });
+    expect(found.got.error).toContain("PolicyStoreError");
+    expect(found.list.error).toContain("PolicyStoreError");
+  });
+
+  it("reports a missing table as a store error, not as an empty policy", async () => {
+    const found = await policy({ noTable: true, get: "github_list_issues" });
+    expect(found.got.error).toContain("PolicyStoreError: the policy table could not be read");
+  });
+});
+
+describe("the whole stack: code tool, Dynamic Worker, broker and policy table", { timeout: 30_000 }, () => {
+  const records = [record("list_issues"), record("delete_repo", { callerRule: "direct", tier: 2 }), record("create_issue", { tier: 1 })];
+  async function brokered(script: string, table: object = { records }): Promise<{ output: CodeToolOutput; calls: readonly { path: string }[] }> {
+    const response = await worker.fetch("http://harness.invalid/brokered", {
+      method: "POST",
+      body: JSON.stringify({ ...table, input: { script, project: "demo" } }),
+    });
+    const reply = (await response.json()) as { output: unknown; calls: { path: string }[] };
+    return { output: codeToolOutputSchema.parse(reply.output), calls: reply.calls };
+  }
+
+  it("lets a script find and call a tool the policy allows", async () => {
+    const { output, calls } = await brokered(`const [path] = await search("list");\nconst page = await tools[path]({ page: 1 });\nreturn page.from;`);
+    expect(output).toMatchObject({ status: "completed", result: "list_issues", report: { callsByTool: { github_list_issues: 1 } } });
+    expect(calls).toEqual([{ path: "github/list_issues", args: { page: 1 } }]);
+  });
+
+  it.each([
+    ["a direct-only tool", "github_delete_repo", "may only be called directly"],
+    ["a tool with no record", "github_transfer_repo", "has no policy record"],
+    ["a tier-1 tool", "github_create_issue", "tier 1 tools"],
+  ])("ends the run with policy_denied when a script calls %s, even if it catches the error", async (_label, path, reason) => {
+    const { output, calls } = await brokered(
+      `await tools.github_list_issues({});\ntry { await tools.${path}({}); } catch (error) { console.log("caught", error.message); }\n` +
+        `await tools.github_list_issues({}).catch(() => {});\nreturn "carried on";`,
+    );
+    expect(output).toMatchObject({ status: "error", error: { code: "policy_denied" } });
+    if (output.status === "error") expect(output.error.message).toContain(reason);
+    expect(JSON.stringify(output)).not.toContain("carried on");
+    expect(calls.length).toBe(1);
+  });
+
+  it("denies every call when the policy table is missing", async () => {
+    const { output, calls } = await brokered(`return await tools.github_list_issues({});`, { noTable: true });
+    expect(output).toMatchObject({ status: "error", error: { code: "policy_denied", message: 'the call to "github_list_issues" was refused: the policy table is unavailable' } });
+    expect(calls).toEqual([]);
   });
 });
