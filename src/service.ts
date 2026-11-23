@@ -15,6 +15,7 @@ import { admitRun, releaseRun, type QuotaStore } from "./broker/quotas";
 import type { AttemptGate } from "./code-tool/attempts";
 import { callGate, runGate, type ControlStore } from "./console/control";
 import type { MeterFactory } from "./meter/meter";
+import type { MetricsSink } from "./metrics/metrics";
 import { runCodeTool } from "./code-tool/run";
 import type { CodeToolOutput } from "./contracts/code-tool";
 import type { PolicyRecord } from "./contracts/policy";
@@ -32,6 +33,8 @@ export interface CodeToolServiceDeps {
   readonly docsFor: (path: string) => Promise<{ readonly typing: string } | undefined>;
   /** Token metering. Required, so that "off" is a choice someone made and not an omission. */
   readonly meter: MeterFactory;
+  /** Where per-run metrics go. */
+  readonly metrics: MetricsSink;
   /** The owner's switches: Code Mode, the kill switch, paused projects, blocked tools. */
   readonly control: ControlStore;
   readonly now: () => number;
@@ -78,6 +81,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       newRunId: deps.newRunId,
       attempts: caller.attempts,
       meter: deps.meter,
+      metrics: deps.metrics,
       control: runGate(deps.control),
       exposure,
       admission: {

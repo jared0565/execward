@@ -17,6 +17,7 @@ import { memoryQuotaStore } from "../src/broker/quotas";
 import { attemptGate } from "../src/code-tool/attempts";
 import { INITIAL_CONTROL_STATE, memoryControlStore } from "../src/console/control";
 import { memoryMeterSink, meter } from "../src/meter/meter";
+import { memoryMetricsSink } from "../src/metrics/metrics";
 import type { DataClass } from "../src/contracts/policy";
 import type { Executor } from "../src/executor";
 import { codeToolService, type CodeToolServiceDeps } from "../src/service";
@@ -193,6 +194,7 @@ describe("the code tool with every control in place", () => {
       definitionFor: async () => ({ description: "t", inputSchema: { type: "object", additionalProperties: true } }),
       docsFor: async () => undefined,
       meter: meter({ level: "off", sink: memoryMeterSink() }),
+      metrics: memoryMetricsSink(),
     control: memoryControlStore({ ...INITIAL_CONTROL_STATE, codeMode: true }),
       now: () => 1_800_000_000_000,
       newRunId: () => `run-${++run}`,
