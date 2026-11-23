@@ -56,7 +56,7 @@ describe("the run report (FR-39)", () => {
       retries: 0,
       assertions: { passed: 2, failed: 0 },
       sideEffects: [],
-      verification: "not_applicable",
+      verification: "unreviewed",
       durationMs: reply.report.durationMs,
     });
     expect(reply.report.scriptHash).toMatch(/^[0-9a-f]{64}$/);

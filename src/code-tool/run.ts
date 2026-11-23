@@ -15,6 +15,7 @@ import { RUN_LIMITS, SCRIPT_LIMITS } from "../limits";
 import { checkScript } from "../static-check/check";
 import type { AuditLog } from "../audit/log";
 import type { AttemptGate } from "./attempts";
+import { releaseGate, type GateCheck } from "./release-gate";
 
 /**
  * The script's way out for one run. A host that refuses a call on security
@@ -223,6 +224,10 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     return shown;
   };
   let runHost: RunHost | undefined;
+  // Set by the release gate. Until then nothing has been checked, so nothing is claimed.
+  let verification: RunReport["verification"] = "not_applicable";
+  let gateChecks: readonly GateCheck[] | undefined;
+  let criteria: RunReport["criteria"];
   const report = (errors: readonly ExecWardError[], assertionFailed = false): RunReport => ({
     runId,
     scriptHash,
@@ -235,8 +240,8 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     // A run ends at its first failed assertion, so `failed` is 0 or 1.
     assertions: { passed: assertionsPassed, failed: assertionFailed ? 1 : 0 },
     sideEffects: [],
-    // No reviewer exists yet (Phase 2), so nothing is claimed.
-    verification: "not_applicable",
+    ...(criteria ? { criteria } : {}),
+    verification,
     durationMs: Math.max(0, deps.now() - started),
   });
   const journal: CallRecord[] = [];
@@ -275,6 +280,10 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
       rawProject,
     );
   }
+
+  // FR-47: the criteria are on record before work starts. Through this route they are the
+  // model's own words, so they are marked as that and never treated as the user's.
+  if (input.data.criteria !== undefined && input.data.criteria.length > 0) criteria = { source: "model_supplied", items: [...input.data.criteria] };
 
   // FR-41: a task that was closed, by a security failure or by using up its retries, runs nothing more.
   const closed = deps.attempts?.blocked();
@@ -318,6 +327,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
         provider: exposed?.provider ?? "unknown",
         ...(exposed ? { allowedDataClass: exposed.allowed } : {}),
         ...(input.data.intent === undefined ? {} : { intent: input.data.intent }),
+        ...(criteria ? { criteria } : {}),
       },
     });
   } catch {
@@ -415,6 +425,27 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
       };
       output = { status: "error", error, ...logs, ...hygiene, report: report([error], outcome.failure.kind === "assertion_failed") };
     }
+
+    // FR-47: the release gate checks exactly what is about to be handed over.
+    const verdict = releaseGate({
+      ...(output.status === "completed" ? { result: output.result } : {}),
+      ...(output.status === "completed" || output.status === "error" ? { logs: output.logs ?? [] } : {}),
+      ...(output.status === "error" ? { errorMessage: output.error.message } : {}),
+      read,
+      allowed,
+      masked,
+      maxResultBytes: limits.maxResultBytes,
+    });
+    gateChecks = verdict.checks;
+    if (verdict.failure) {
+      // A failed check cannot be overruled. The reply is replaced, not repaired.
+      verification = "failed";
+      output = { status: "error", error: verdict.failure, report: report([verdict.failure], output.report.assertions.failed > 0) };
+    } else if (output.status === "completed") {
+      // No independent reviewer exists yet (FR-48), so a released result is never called passed.
+      verification = "unreviewed";
+      output = { ...output, report: { ...output.report, verification } };
+    }
   } catch (cause) {
     // An executor must not throw; if one does, that is a sandbox fault. Nothing is run another way.
     // What was read before the fault still counts, and what may be shown is unknown, so paths are hidden.
@@ -443,5 +474,5 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
       ? { ...(output.dataClass === undefined ? {} : { dataClass: output.dataClass }), masked: output.masked === true }
       : {};
   // The outcome is on record before anyone is told it.
-  return (await finish(output, hygieneFacts)) ? output : unrecorded();
+  return (await finish(output, { ...hygieneFacts, ...(gateChecks ? { releaseGate: gateChecks } : {}) })) ? output : unrecorded();
 }

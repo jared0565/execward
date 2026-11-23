@@ -50,7 +50,21 @@ export const runReportSchema = z.strictObject({
   }),
   /** Side effects already committed, in order. Empty while only tier-0 tools exist. */
   sideEffects: z.array(z.strictObject({ tool: z.string(), summary: z.string() })),
+  /**
+   * `unreviewed`: released after the fixed checks, with no independent reviewer.
+   * `failed`: a fixed check withheld the reply. `not_applicable`: nothing was handed over.
+   */
   verification: z.enum(["passed", "failed", "unreviewed", "not_applicable"]),
+  /**
+   * The acceptance criteria recorded before the run (contract 1.5.0, FR-47), and
+   * who wrote them. Code does not judge them; a reviewer does.
+   */
+  criteria: z
+    .strictObject({
+      source: z.enum(["model_supplied", "request"]),
+      items: z.array(z.string()),
+    })
+    .optional(),
   durationMs: z.number().nonnegative(),
 });
 
