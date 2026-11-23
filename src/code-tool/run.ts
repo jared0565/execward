@@ -218,7 +218,7 @@ function withCondition(message: string, script: string, line: number | undefined
 export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolOutput> {
   const output = await runOnce(rawInput, deps);
   // Every ending is counted, whichever line of `runOnce` returned it.
-  deps.attempts?.settle(output);
+  await deps.attempts?.settle(output);
   return output;
 }
 

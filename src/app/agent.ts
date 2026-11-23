@@ -51,6 +51,8 @@ export interface AppDeps {
   /** How this app reaches its model provider: a key of `PROVIDER_ROUTES`. */
   readonly providerRoute: unknown;
   readonly maxTurns?: number;
+  /** Told when the task is closed and must go to a person: the escalation queue's hook. */
+  readonly onEscalate?: (escalation: Escalation) => unknown;
 }
 
 export interface AppResult {
@@ -88,7 +90,12 @@ export async function runAppTask(request: string, deps: AppDeps): Promise<AppRes
   const returned: string[] = [];
   const escalations: Escalation[] = [];
   // One gate for the whole request: retries are counted per task.
-  const attempts = attemptGate({ onEscalate: (escalation) => escalations.push(escalation) });
+  const attempts = attemptGate({
+    onEscalate: (escalation) => {
+      escalations.push(escalation);
+      return deps.onEscalate?.(escalation);
+    },
+  });
   let turns = 0;
   let inputTokens = 0;
   let outputTokens = 0;

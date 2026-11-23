@@ -28,8 +28,12 @@ export interface AttemptGate {
   blocked(): ExecWardError | undefined;
   /** Failed runs in a row before the next one: the report's `retries`. */
   retries(): number;
-  /** Told how every run ended, including ones this gate refused. */
-  settle(output: CodeToolOutput): void;
+  /**
+   * Told how every run ended, including ones this gate refused. Resolves once
+   * any escalation it caused has been dealt with, so that a project is paused
+   * before the reply that caused the pause is handed over.
+   */
+  settle(output: CodeToolOutput): Promise<void>;
   /** Retries the model still has. 0 once the task is closed. */
   remaining(): number;
 }
@@ -37,7 +41,7 @@ export interface AttemptGate {
 export interface AttemptGateOptions {
   readonly maxRetries?: number;
   /** Called once, when the task is closed and must go to a person. */
-  readonly onEscalate?: (escalation: Escalation) => void;
+  readonly onEscalate?: (escalation: Escalation) => unknown;
 }
 
 export function attemptGate(options: AttemptGateOptions = {}): AttemptGate {
@@ -45,16 +49,20 @@ export function attemptGate(options: AttemptGateOptions = {}): AttemptGate {
   let failuresInARow = 0;
   let closed: ExecWardError | undefined;
 
-  function close(reason: EscalationReason, error: ExecWardError, runId: string, refusal: ExecWardError): void {
+  async function close(reason: EscalationReason, error: ExecWardError, runId: string, refusal: ExecWardError): Promise<void> {
     closed = refusal;
-    options.onEscalate?.({ reason, error, runId });
+    try {
+      await options.onEscalate?.({ reason, error, runId });
+    } catch {
+      // The task is closed whether or not anyone could be told.
+    }
   }
 
   return {
     blocked: () => closed,
     retries: () => failuresInARow,
     remaining: () => (closed ? 0 : Math.max(0, maxRetries - failuresInARow)),
-    settle(output) {
+    async settle(output) {
       // A refusal this gate caused is not a new failure.
       if (closed) return;
       if (output.status === "completed" || output.status === "paused") {
@@ -72,7 +80,7 @@ export function attemptGate(options: AttemptGateOptions = {}): AttemptGate {
       }
       failuresInARow += 1;
       if (failuresInARow > maxRetries) {
-        close("retries_exhausted", error, output.report.runId, {
+        await close("retries_exhausted", error, output.report.runId, {
           code: "quota_exceeded",
           message: `the retry limit for this task was reached (${maxRetries} retries); it has been escalated`,
         });
