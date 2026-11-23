@@ -43,6 +43,33 @@ export interface CodeToolServiceDeps {
   readonly gate?: Gate;
 }
 
+/**
+ * How long, inside one run, a reading of the switches or of a tool's policy is used
+ * again before the database is asked once more.
+ *
+ * Reading both on every tool call cost about 40 ms a call, which put any script with
+ * more than a few calls over the latency budget (task 1.9.4). The project owner chose
+ * this on 2026-11-23: a kill, a pause or a policy change stops a script that is already
+ * running within this time, not at its very next call. A new run always reads afresh.
+ */
+export const RUN_RECHECK_MS = 250;
+
+/** `read`, asked again only when the last answer is older than `RUN_RECHECK_MS`. A failed read is never kept. */
+function reused<T>(read: () => Promise<T>, now: () => number): () => Promise<T> {
+  let last: { readonly at: number; readonly value: Promise<T> } | undefined;
+  return () => {
+    const at = now();
+    if (last !== undefined && at - last.at < RUN_RECHECK_MS) return last.value;
+    const value = read();
+    const mine = { at, value };
+    last = mine;
+    value.catch(() => {
+      if (last === mine) last = undefined;
+    });
+    return value;
+  };
+}
+
 export interface CallerContext {
   /**
    * How the calling client reaches its model provider: a key of
@@ -88,17 +115,32 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
         admit: (run) => admitRun(quotaContext(run.project), run.runId, run.wallClockMs),
         release: (run) => releaseRun(quotaContext(run.project), run.runId),
       },
-      hostFor: (run) =>
-        brokerHost({
-          store: deps.policy,
+      hostFor: (run) => {
+        // One run's own short memory of the switches and of each tool's policy.
+        const control: ControlStore = { read: reused(() => deps.control.read(), deps.now), write: (next, expected) => deps.control.write(next, expected) };
+        const records = new Map<string, () => Promise<PolicyRecord | undefined>>();
+        const policy: PolicyStore = {
+          list: () => deps.policy.list(),
+          get(path) {
+            let read = records.get(path);
+            if (!read) {
+              read = reused(() => deps.policy.get(path), deps.now);
+              records.set(path, read);
+            }
+            return read();
+          },
+        };
+        return brokerHost({
+          store: policy,
           upstream: deps.upstream,
           definitionFor: deps.definitionFor,
           docsFor: deps.docsFor,
           quotas: quotaContext(run.project),
-          control: callGate(deps.control, run.project),
+          control: callGate(control, run.project),
           // Resolved before the first call is forwarded; a failure refuses every call.
           maxDataClass: exposure(run.project).then((found) => found.allowed),
-        }),
+        });
+      },
     });
   };
 }

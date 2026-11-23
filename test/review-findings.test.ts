@@ -9,6 +9,7 @@ import { auditLog, memoryAuditStore } from "../src/audit/log";
 import { brokerHost, SEARCH_LIMITS } from "../src/broker/broker";
 import { checkAgainstSchema } from "../src/broker/json-schema";
 import { memoryPolicyStore } from "../src/broker/policy-store";
+import { memoryQuotaStore, type QuotaStore } from "../src/broker/quotas";
 import { runCodeTool, type RunHost } from "../src/code-tool/run";
 import type { Executor } from "../src/executor";
 import { record } from "./fixtures/policy";
@@ -161,5 +162,61 @@ describe("F9: how much one discovery call may ask of the host", () => {
     await expect(broker.search(`${padding} issues`)).resolves.toEqual([]);
     await expect(broker.search(`issues ${padding}`.slice(0, SEARCH_LIMITS.maxQueryChars))).resolves.toEqual(["github_list_issues"]);
     await expect(broker.describe("a".repeat(SEARCH_LIMITS.maxPathChars + 1))).rejects.toThrow("is available to scripts");
+  });
+});
+
+describe("counting calls ahead, so a loop does not write a counter on every call (task 1.9.4)", () => {
+  function setup(callsPerDay?: number) {
+    const inner = memoryQuotaStore();
+    const totals = new Map<string, number>();
+    let writes = 0;
+    const store: QuotaStore = {
+      ...inner,
+      async add(key, windowMs, amount, now) {
+        writes++;
+        const total = await inner.add(key, windowMs, amount, now);
+        totals.set(key, total);
+        return total;
+      },
+    };
+    const newRun = () =>
+      brokerHost({
+        store: memoryPolicyStore([record("list_issues", { quotas: callsPerDay === undefined ? {} : { callsPerDay } })]),
+        upstream: async () => "ok",
+        definitionFor: async () => ({ description: "test tool", inputSchema: ANY }),
+        quotas: { store, project: "demo", now: () => 1_000 },
+      });
+    return { newRun, totals, writes: () => writes };
+  }
+
+  it("writes far fewer counters than calls, and ends with exactly the calls made", async () => {
+    const { newRun, totals, writes } = setup();
+    const host = newRun();
+    for (let call = 0; call < 50; call++) await host.callTool("github_list_issues", {});
+    // Blocks of 1, 2, 4, 8, 16, 16, 16 cover 50 calls in seven writes.
+    expect(writes()).toBe(7);
+    expect(totals.get("calls:demo")).toBe(63);
+    await host.close?.();
+    expect(totals.get("calls:demo")).toBe(50);
+  });
+
+  it("meets a tool's daily limit exactly: not one call early, not one late", async () => {
+    const { newRun, totals } = setup(5);
+    const host = newRun();
+    for (let call = 0; call < 5; call++) await expect(host.callTool("github_list_issues", {})).resolves.toBe("ok");
+    await expect(host.callTool("github_list_issues", {})).rejects.toThrow("quota_exceeded");
+    await host.close?.();
+    // Five made, and the refused one stays counted, as a single refused call always has.
+    expect(totals.get("calls:demo:github_list_issues")).toBe(6);
+  });
+
+  it("counts across runs: a second run sees what the first one used", async () => {
+    const { newRun } = setup(5);
+    const first = newRun();
+    for (let call = 0; call < 3; call++) await first.callTool("github_list_issues", {});
+    await first.close?.();
+    const second = newRun();
+    for (let call = 0; call < 2; call++) await expect(second.callTool("github_list_issues", {})).resolves.toBe("ok");
+    await expect(second.callTool("github_list_issues", {})).rejects.toThrow("quota_exceeded");
   });
 });

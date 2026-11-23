@@ -22,6 +22,10 @@ import { GITHUB_READ_ONLY_TOOLS } from "../../src/tools/github-inventory";
 import type { PolicyRecord } from "../../src/contracts/policy";
 import type { ToolBackend } from "../../src/eval/types";
 import { escalationQueue } from "../../src/console/escalations";
+import { attemptGate } from "../../src/code-tool/attempts";
+import { meter, memoryMeterSink } from "../../src/meter/meter";
+import { memoryMetricsSink } from "../../src/metrics/metrics";
+import { codeToolService } from "../../src/service";
 import { runScheduled } from "../../src/worker/scheduled";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
@@ -148,6 +152,19 @@ function fixture(): Promise<{ backend: ToolBackend; pins: Pin[]; records: Policy
   return fixtureStack;
 }
 
+/** Drops every table and builds them again from the three migrations. */
+async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): Promise<void> {
+  for (const name of ["audit_log_no_update", "audit_log_no_delete"]) await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).bind().run();
+  for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
+  await db.prepare(migration).bind().run();
+  for (const statement of auditMigration.split(/;\s*\n(?=CREATE)/)) await db.prepare(statement).bind().run();
+  const state = stateMigration
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+  for (const statement of state.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
+}
+
 export default {
   async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like; GITHUB_TOKEN?: string; BACKUPS?: BackupBucket }): Promise<Response> {
     const calls: { path: string; args: unknown }[] = [];
@@ -159,17 +176,7 @@ export default {
       if (!bucket) return Response.json({ error: "no bucket" }, { status: 500 });
       const db = env.DB as unknown as BackupDatabase & AuditDatabase & StateDatabase;
       const now = body.now ?? Date.now();
-      const freshTables = async (): Promise<void> => {
-        for (const name of ["audit_log_no_update", "audit_log_no_delete"]) await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).bind().run();
-        for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
-        await db.prepare(migration).bind().run();
-        for (const statement of auditMigration.split(/;\s*\n(?=CREATE)/)) await db.prepare(statement).bind().run();
-        const state = stateMigration
-          .split("\n")
-          .filter((line) => !line.trim().startsWith("--"))
-          .join("\n");
-        for (const statement of state.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
-      };
+      const freshTables = (): Promise<void> => emptyTables(db);
       // An empty bucket prefix and empty tables for every request.
       for (let page = await bucket.list({ prefix: "backups/" }); ; page = await bucket.list({ prefix: "backups/", ...(page.cursor === undefined ? {} : { cursor: page.cursor }) })) {
         if (page.objects.length > 0) await bucket.delete(page.objects.map((object) => object.key));
@@ -240,6 +247,48 @@ export default {
         project: (await d1ProjectStore(db).get("work")) ?? null,
         escalations: (await db.prepare("SELECT id FROM escalations").bind().all<{ id: string }>()).results.length,
       });
+    }
+    if (route === "/service") {
+      // The code tool as production will serve it (src/service.ts), with every store on the
+      // database: policy table, project classes, switches, quota counters and the audit log.
+      // `setup` empties the tables and fills the policy; later requests run against what is there.
+      const body = (await request.json()) as { setup?: boolean; codeMode?: boolean; projects?: number; verify?: boolean; input?: unknown };
+      const db = env.DB as unknown as BackupDatabase & AuditDatabase & StateDatabase;
+      const { backend, pins, records } = await fixture();
+      if (body.setup) {
+        await emptyTables(db);
+        for (const record of records) await putPolicyRecord(env.DB, record);
+        await putProjectRecord(db, { project: "eval", dataClass: "confidential" });
+        // More projects for a timed run, which would otherwise meet one project's limit of runs a minute.
+        for (let index = 0; index < Math.min(body.projects ?? 0, 100); index++) await putProjectRecord(db, { project: `eval-${index}`, dataClass: "confidential" });
+        // Code Mode is off until the owner switches it on. The setup does that unless told not to.
+        const control = d1ControlStore(db);
+        const state = await control.read();
+        if (body.codeMode !== false) await control.write({ ...state, codeMode: true, version: state.version + 1 }, state.version);
+        return Response.json({ ready: records.length });
+      }
+      const pinned = registry({ pins, current: async (path) => pins.find((pin) => pin.path === path)?.definition });
+      const auditStore = d1AuditStore(db);
+      const service = codeToolService({
+        executor: dynamicWorkerExecutor(env.LOADER),
+        policy: d1PolicyStore(env.DB),
+        projects: d1ProjectStore(db),
+        quotas: d1QuotaStore(db),
+        audit: auditStore,
+        control: d1ControlStore(db),
+        upstream: ({ record, args }) => backend.call(record.tool, args),
+        definitionFor: (record) => pinned.definitionFor(record),
+        docsFor: (path) => pinned.docsFor(path),
+        meter: meter({ level: "off", sink: memoryMeterSink() }),
+        metrics: memoryMetricsSink(),
+        now: () => Date.now(),
+        newRunId: () => crypto.randomUUID(),
+      });
+      const output = await service(body.input, { providerRoute: "anthropic_api_commercial", attempts: attemptGate() });
+      // Reading the whole log back is for tests. It is left out of a timed run.
+      if (!body.verify) return Response.json({ output });
+      const entries = await auditStore.all();
+      return Response.json({ output, auditEntries: entries.length, chain: await verifyChain(entries, (await auditStore.anchor()) ?? undefined) });
     }
     if (route === "/fixture") {
       // The code tool over the invented GitHub, for the Code Mode arm of the eval (task 1.9.5).

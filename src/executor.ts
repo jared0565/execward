@@ -44,7 +44,7 @@ export interface SandboxHost {
    * Told when the run is over, however it ended. A host that has this sends nothing
    * upstream afterwards, even for a call that was already being checked.
    */
-  close?(): void;
+  close?(): void | Promise<void>;
 }
 
 export interface ExecutionRequest {

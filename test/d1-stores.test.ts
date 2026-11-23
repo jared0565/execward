@@ -337,3 +337,33 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
     expect(reply.kinds).toEqual(["maintenance", "maintenance"]);
   });
 });
+
+describe("the code tool as production will serve it, with every store on the database (task 1.9.4)", { timeout: 120_000 }, () => {
+  async function service(body: Record<string, unknown>): Promise<{ ready?: number; output?: { status: string; result?: unknown; error?: { code: string; message: string } }; auditEntries?: number; chain?: { ok: boolean } }> {
+    const response = await worker.fetch("http://harness.invalid/service", { method: "POST", body: JSON.stringify(body) });
+    return (await response.json()) as never;
+  }
+
+  it("runs a script that calls a tool, and writes the run to the audit log", async () => {
+    expect(await service({ setup: true })).toEqual({ ready: 15 });
+    const reply = await service({ verify: true, input: { project: "eval", script: `const repo = await tools.github_get_repository({ owner: "northwind-labs", repo: "web-dashboard" });\nreturn repo.name;` } });
+    expect(reply.output?.error).toBeUndefined();
+    expect(reply.output).toMatchObject({ status: "completed", result: "web-dashboard" });
+    // Started and finished.
+    expect(reply.auditEntries).toBe(2);
+    expect(reply.chain).toMatchObject({ ok: true });
+  });
+
+  it("runs nothing until the owner has switched Code Mode on", async () => {
+    await service({ setup: true, codeMode: false });
+    const reply = await service({ input: { project: "eval", script: "return 1;" } });
+    expect(reply.output).toMatchObject({ status: "refused", error: { code: "code_mode_off" } });
+  });
+
+  it("treats a project with no record as public: it may run, and may not call a tool above that class", async () => {
+    await service({ setup: true });
+    expect((await service({ input: { project: "unknown-project", script: "return 1;" } })).output).toMatchObject({ status: "completed", result: 1 });
+    const reply = await service({ input: { project: "unknown-project", script: `return await tools.github_get_repository({ owner: "northwind-labs", repo: "web-dashboard" });` } });
+    expect(reply.output).toMatchObject({ status: "error", error: { code: "policy_denied" } });
+  });
+});
