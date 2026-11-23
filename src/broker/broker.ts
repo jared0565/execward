@@ -175,9 +175,14 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
   function end(code: "policy_denied" | "quota_exceeded" | "circuit_open" | "definition_changed", path: string, reason: string): never {
     denials.push({ path, reason });
     // The first refusal is the one reported; the message names the tool, never the arguments.
-    ended ??= { code, message: `the call to "${path}" was refused: ${reason}` };
+    // A path with no policy record is whatever the script typed, so it is not
+    // repeated: after a read, it could carry that data out in the error (FR-36).
+    ended ??= { code, message: `${knownPaths.has(path) ? `the call to "${path}"` : "a call"} was refused: ${reason}` };
     throw new Error(`${code}: ${reason}`);
   }
+
+  /** Paths the policy table has a record for: real tools, not text a script made up. */
+  const knownPaths = new Set<string>();
 
   function deny(path: string, reason: string): never {
     return end("policy_denied", path, reason);
@@ -223,7 +228,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
 
   async function lookup(path: string): Promise<PolicyRecord | undefined> {
     try {
-      return await deps.store.get(path);
+      const record = await deps.store.get(path);
+      if (record !== undefined) knownPaths.add(path);
+      return record;
     } catch {
       // Fail closed. The store's own error is not passed to the script.
       return deny(path, "the policy table is unavailable");

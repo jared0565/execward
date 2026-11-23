@@ -331,6 +331,7 @@ describe("every run is logged, always (FR-8)", () => {
         script: 'return "[redacted: a GitHub token]";',
         error: { code: "static_check_failed", message: "the script contains what looks like a GitHub token", line: 1 },
         security: true,
+        report: output.report,
       },
     ]);
     expect(JSON.stringify(store.entries)).not.toContain(token);

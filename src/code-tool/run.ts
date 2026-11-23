@@ -147,6 +147,32 @@ function countingHost(host: SandboxHost, callsByTool: Record<string, number>, jo
   };
 }
 
+/** Codes that end a run. The run's own error already reports them. */
+const RUN_ENDING_CODES: ReadonlySet<string> = new Set(["policy_denied", "quota_exceeded", "circuit_open", "definition_changed"]);
+
+/** Most failed calls one report lists. */
+export const MAX_REPORTED_CALL_ERRORS = 20;
+
+/** Shown in place of a tool path that might carry withheld data. */
+export const UNNAMED_CALL = "(a call that did not succeed)";
+
+/**
+ * Failed calls a script survived, for the report (FR-39). A script that
+ * catches an error and carries on must not be able to hide that it happened.
+ * Only the code and the tool are given: the error's own words may hold data.
+ */
+function callErrors(journal: readonly CallRecord[], shownPath: (path: string) => string): ExecWardError[] {
+  const failed = journal.filter((entry) => entry.outcome !== "ok" && entry.outcome !== "pending" && !RUN_ENDING_CODES.has(entry.outcome));
+  const listed: ExecWardError[] = failed.slice(0, MAX_REPORTED_CALL_ERRORS).map((entry) => ({
+    code: Object.hasOwn(ERROR_CODES, entry.outcome) ? (entry.outcome as ErrorCode) : "upstream_error",
+    message: `a call to ${shownPath(entry.path)} failed`,
+  }));
+  if (failed.length > MAX_REPORTED_CALL_ERRORS) {
+    listed.push({ code: "upstream_error", message: `${failed.length - MAX_REPORTED_CALL_ERRORS} more failed calls are not listed` });
+  }
+  return listed;
+}
+
 function describeIssues(issues: readonly { path: PropertyKey[]; message: string }[]): string {
   return issues
     .slice(0, 5)
@@ -171,13 +197,27 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
 
   let assertionsPassed = 0;
   let recordsRead = 0;
+  // A script chooses the path of a call that fails, so when content is being
+  // withheld such a path could carry it out. Only paths that worked are named.
+  let hidePaths = false;
+  const shownPath = (path: string): string => (!hidePaths || journal.some((entry) => entry.path === path && entry.outcome === "ok") ? path : UNNAMED_CALL);
+  const shownCalls = (): Record<string, number> => {
+    const shown: Record<string, number> = {};
+    for (const [path, count] of Object.entries(callsByTool)) {
+      const name = shownPath(path);
+      shown[name] = (shown[name] ?? 0) + count;
+    }
+    return shown;
+  };
+  let runHost: RunHost | undefined;
   const report = (errors: readonly ExecWardError[], assertionFailed = false): RunReport => ({
     runId,
     scriptHash,
-    callsByTool: { ...callsByTool },
+    callsByTool: shownCalls(),
     recordsRead,
     recordsWritten: 0,
-    errors: [...errors],
+    // The error that ended the run, then any failed calls the script survived.
+    errors: [...errors, ...callErrors(journal, shownPath)],
     retries: 0,
     // A run ends at its first failed assertion, so `failed` is 0 or 1.
     assertions: { passed: assertionsPassed, failed: assertionFailed ? 1 : 0 },
@@ -191,16 +231,17 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
 
   /** A refusal is recorded too. If even that cannot be written, the refusal still stands. */
   const refused = async (error: ExecWardError, script: unknown, project: unknown): Promise<CodeToolOutput> => {
+    const reply: CodeToolOutput = { status: "refused", error, report: report([error]) };
     await deps.audit
       .record({
         kind: "run_refused",
         security: isSecurity(error),
         runId,
         project: typeof project === "string" ? project.slice(0, 128) : "unknown",
-        body: { scriptHash, script: typeof script === "string" ? script.slice(0, SCRIPT_LIMITS.maxScriptBytes) : null, error, security: isSecurity(error) },
+        body: { scriptHash, script: typeof script === "string" ? script.slice(0, SCRIPT_LIMITS.maxScriptBytes) : null, error, security: isSecurity(error), report: reply.report },
       })
       .catch(() => undefined);
-    return { status: "refused", error, report: report([error]) };
+    return reply;
   };
   const rawProject = typeof rawInput === "object" && rawInput !== null ? (rawInput as { project?: unknown }).project : undefined;
 
@@ -285,6 +326,8 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
           calls: journal,
           resultBytes: reply.status === "completed" ? byteLength(reply.result) : 0,
           durationMs: reply.report.durationMs,
+          // The report as returned, so the log and the reply cannot disagree (FR-39).
+          report: reply.report,
           ...extra,
         },
       });
@@ -301,6 +344,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
   let output: CodeToolOutput;
   try {
     const host = deps.hostFor({ runId, project: input.data.project });
+    runHost = host;
     const outcome = await deps.executor.execute({
       runId,
       script: input.data.script,
@@ -316,6 +360,7 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     const allowed = exposed?.allowed ?? deps.allowedDataClass?.(input.data.project) ?? "public";
     const read = provenance.dataClass;
     const masked = read !== undefined && DATA_CLASSES.indexOf(read) > DATA_CLASSES.indexOf(allowed);
+    hidePaths = masked;
     const hygiene = { untrusted: true as const, ...(read === undefined ? {} : { dataClass: read }), ...(masked ? { masked: true } : {}) };
     // Logs are the script's to write, so they are withheld with the result.
     const logs = outcome.logs.length > 0 && !masked ? { logs: [...outcome.logs] } : {};
@@ -355,6 +400,13 @@ export async function runCodeTool(rawInput: unknown, deps: CodeToolDeps): Promis
     }
   } catch (cause) {
     // An executor must not throw; if one does, that is a sandbox fault. Nothing is run another way.
+    // What was read before the fault still counts, and what may be shown is unknown, so paths are hidden.
+    hidePaths = true;
+    try {
+      recordsRead = runHost?.provenance?.().records ?? 0;
+    } catch {
+      recordsRead = 0;
+    }
     const error: ExecWardError = { code: "sandbox_fault", message: `the executor failed: ${cause instanceof Error ? cause.message : String(cause)}` };
     const reply: CodeToolOutput = { status: "error", error, report: report([error]) };
     return (await finish(reply)) ? reply : unrecorded();

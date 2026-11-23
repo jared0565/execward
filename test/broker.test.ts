@@ -74,7 +74,9 @@ describe("the broker's caller rules (FR-6, FR-13)", () => {
     const { host, upstreamCalls } = broker();
     await expect(host.callTool(path, { secret: "do not log me" })).rejects.toThrow(`policy_denied: ${reason}`);
     expect(upstreamCalls).toEqual([]);
-    expect(host.securityError()).toEqual({ code: "policy_denied", message: `the call to "${path}" was refused: ${reason}` });
+    // A tool with a record is named; a path with none is whatever the script typed, and is not repeated.
+    const named = reason === "the tool has no policy record" ? "a call" : `the call to "${path}"`;
+    expect(host.securityError()).toEqual({ code: "policy_denied", message: `${named} was refused: ${reason}` });
     expect(JSON.stringify(host.denials)).not.toContain("do not log me");
   });
 
@@ -123,6 +125,20 @@ describe("the broker's caller rules (FR-6, FR-13)", () => {
   });
 });
 
+describe("a refusal does not repeat what the script typed (FR-36)", () => {
+  it("names a real tool in the refusal, and never a path with no policy record", async () => {
+    const real = broker();
+    await expect(real.host.callTool("github_delete_repo", {})).rejects.toThrow("policy_denied");
+    expect(real.host.securityError()?.message).toBe('the call to "github_delete_repo" was refused: the tool may only be called directly, not from a script');
+
+    const madeUp = broker();
+    await expect(madeUp.host.callTool("LEAK_customer_4417_owes_9000", {})).rejects.toThrow("policy_denied");
+    expect(madeUp.host.securityError()?.message).toBe("a call was refused: the tool has no policy record");
+    // The owner's record of the denial keeps the path.
+    expect(madeUp.host.denials).toEqual([{ path: "LEAK_customer_4417_owes_9000", reason: "the tool has no policy record" }]);
+  });
+});
+
 describe("a refusal ends the run at the code tool (FR-41)", () => {
   it("reports policy_denied even when the script caught the refusal and returned a value", async () => {
     const { host, upstreamCalls } = broker();
@@ -144,7 +160,9 @@ describe("a refusal ends the run at the code tool (FR-41)", () => {
     expect(output).toMatchObject({
       status: "error",
       error: { code: "policy_denied", message: 'the call to "github_delete_repo" was refused: the tool may only be called directly, not from a script' },
-      report: { callsByTool: { github_list_issues: 2, github_delete_repo: 1 }, errors: [{ code: "policy_denied" }] },
+      // The run read internal data in a project that may return only public data, so a
+      // call that never succeeded is counted without its name (see test/run-report.test.ts).
+      report: { callsByTool: { github_list_issues: 2, "(a call that did not succeed)": 1 }, errors: [{ code: "policy_denied" }] },
     });
     expect(JSON.stringify(output)).not.toContain("carried on");
     expect(JSON.stringify(output)).not.toContain("after the refusal");
