@@ -125,8 +125,8 @@ describe("tagging every result with its source and data class (FR-35)", () => {
     await host.callTool("github_list_issues", {});
     await host.callTool("github_get_file", {});
     expect(host.reads).toEqual([
-      { path: "github_list_issues", server: "github", tool: "list_issues", dataClass: "internal", sensitive: false, bytes: 5 },
-      { path: "github_get_file", server: "github", tool: "get_file", dataClass: "confidential", sensitive: true, bytes: 22 },
+      { path: "github_list_issues", server: "github", tool: "list_issues", dataClass: "internal", sensitive: false, bytes: 5, records: 2 },
+      { path: "github_get_file", server: "github", tool: "get_file", dataClass: "confidential", sensitive: true, bytes: 22, records: 1 },
     ]);
   });
 

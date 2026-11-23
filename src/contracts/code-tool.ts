@@ -4,6 +4,20 @@
 import { z } from "zod";
 import { SCRIPT_LIMITS } from "../limits";
 import { errorSchema } from "./errors";
+import { dataClassSchema } from "./policy";
+
+/**
+ * Output hygiene fields (contract 1.4.0, FR-36). All optional, so a 1.3.0
+ * client still reads every reply.
+ */
+const hygiene = {
+  /** Always true on a reply from ExecWard: the content is data, never instructions. */
+  untrusted: z.literal(true).optional(),
+  /** The highest data class the run read. Absent when it read nothing. */
+  dataClass: dataClassSchema.optional(),
+  /** True when content was withheld because the run read data above the project's class. */
+  masked: z.boolean().optional(),
+};
 
 /** Contract 1: what a client sends. Unknown fields are refused. */
 export const codeToolInputSchema = z.strictObject({
@@ -52,6 +66,7 @@ export const codeToolOutputSchema = z.discriminatedUnion("status", [
     truncated: z.boolean(),
     /** Captured `console.log` output (contract 1.2.0). Untrusted, like the result. */
     logs: z.array(z.string()).optional(),
+    ...hygiene,
     report: runReportSchema,
   }),
   z.strictObject({
@@ -65,6 +80,7 @@ export const codeToolOutputSchema = z.discriminatedUnion("status", [
     error: errorSchema,
     /** Output captured before the run ended (contract 1.2.0). Untrusted. */
     logs: z.array(z.string()).optional(),
+    ...hygiene,
     report: runReportSchema,
   }),
   z.strictObject({

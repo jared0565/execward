@@ -4,11 +4,12 @@
  * ../executor-dynamic-worker.test.ts can observe what a script can and cannot
  * do. It is never deployed; production has no route that runs a script yet.
  */
-import type { ExecutionLimits, SandboxHost } from "../../src/executor";
+import type { DataClass } from "../../src/contracts/policy";
+import type { ExecutionLimits } from "../../src/executor";
 import migration from "../../migrations/0001_policy.sql";
 import { brokerHost } from "../../src/broker/broker";
 import { d1PolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
-import { runCodeTool } from "../../src/code-tool/run";
+import { runCodeTool, type RunHost } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
 
 interface PolicyBody {
@@ -18,6 +19,7 @@ interface PolicyBody {
   readonly get?: string;
   readonly input?: unknown;
   readonly inputSchema?: unknown;
+  readonly allowedDataClass?: DataClass;
 }
 
 interface RunBody {
@@ -27,8 +29,10 @@ interface RunBody {
 
 const DEFAULT_LIMITS: ExecutionLimits = { cpuMs: 1_000, wallClockMs: 5_000, maxHostCalls: 100, maxResultBytes: 32 * 1024 };
 
-function scriptedHost(calls: { path: string; args: unknown }[]): SandboxHost {
+function scriptedHost(calls: { path: string; args: unknown }[]): RunHost {
   return {
+    // This stand-in reads nothing classified, so output hygiene withholds nothing.
+    provenance: () => ({ dataClass: undefined, records: 0 }),
     async callTool(path, args) {
       calls.push({ path, args });
       if (path === "test_fail") throw new Error("upstream said no");
@@ -85,6 +89,7 @@ export default {
               return { from: record.tool, args };
             },
           }),
+        allowedDataClass: () => body.allowedDataClass ?? "internal",
         newRunId: () => "brokered-run",
         now: () => Date.now(),
       });
