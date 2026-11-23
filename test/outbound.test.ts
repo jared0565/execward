@@ -105,15 +105,26 @@ describe("the code the production Worker loads (task 1.1.6, FR-24)", () => {
     const found: string[] = [];
     for (const file of files) {
       if (file === "src/net/outbound.ts") continue;
+      // The console page is text sent to the owner's browser. Its script runs there, not in the Worker (checked below).
+      if (file === "src/console/page.ts") continue;
       readFileSync(file, "utf8")
         .split("\n")
         .forEach((line, index) => {
           // The Worker's own request handler is named `fetch`. It receives requests; it sends none.
-          if (file === "src/worker.ts" && line.trim() === "fetch(request: Request): Response {") return;
+          if (file === "src/worker.ts" && line.trim() === "async fetch(request: Request, env: Env, ctx: { readonly access?: AccessContext }): Promise<Response> {") return;
           if (reachesTheNetwork(line)) found.push(`${file}:${index + 1}: ${line.trim().slice(0, 120)}`);
         });
     }
     expect(found).toEqual([]);
+  });
+
+  it("lets the console page's browser script call only the console's own addresses", () => {
+    const page = readFileSync("src/console/page.ts", "utf8");
+    const calls = [...page.matchAll(/fetch\(([^,)]*)/g)].map((match) => match[1]);
+    expect(calls.length).toBeGreaterThan(0);
+    for (const target of calls) expect(target).toMatch(/^"\/console\/(?:state|action)"$/);
+    // Nothing else in it reaches out, and it imports nothing.
+    expect(page).not.toMatch(/https?:\/\/|WebSocket|EventSource|XMLHttpRequest|sendBeacon|\bimport\b/);
   });
 
   it("would notice each way of reaching the network, were one added", () => {
