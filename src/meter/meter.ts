@@ -21,6 +21,13 @@ export type MeterLevel = "off" | "summary" | "detailed";
 
 export const METER_LEVELS: readonly MeterLevel[] = ["off", "summary", "detailed"];
 
+/**
+ * The level used when none is named. Summary since Gate 1 passed on 2026-11-24
+ * (task 1.9.8, the owner's answer on the meter): one record per run. Off is
+ * still available, but only by naming it.
+ */
+export const DEFAULT_METER_LEVEL: MeterLevel = "summary";
+
 export interface Tokenizer {
   readonly name: string;
   count(text: string): number;
@@ -90,7 +97,8 @@ export interface MeterFactory {
 }
 
 export interface MeterOptions {
-  readonly level: MeterLevel;
+  /** Left out, it is `DEFAULT_METER_LEVEL`. */
+  readonly level?: MeterLevel;
   readonly sink: MeterSink;
   readonly tokenizer?: Tokenizer;
   /** The typings a model would have been given for every tool, had there been no discovery. */
@@ -122,9 +130,9 @@ const OFF: RunMeter = { toolResult: () => undefined, discovery: () => undefined,
 
 export function meter(options: MeterOptions): MeterFactory {
   // Off touches nothing: not the tokenizer, not the catalog, not the sink.
-  if (options.level === "off") return { level: "off", start: () => OFF };
+  const level = options.level ?? DEFAULT_METER_LEVEL;
+  if (level === "off") return { level: "off", start: () => OFF };
 
-  const level = options.level;
   const tokenizer = options.tokenizer ?? approximateTokenizer;
   let catalogTokens: number | undefined;
 

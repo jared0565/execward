@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest";
 import { auditLog, memoryAuditStore } from "../src/audit/log";
 import { runCodeTool, type RunHost } from "../src/code-tool/run";
 import type { Executor } from "../src/executor";
-import { approximateTokenizer, estimatedSaving, memoryMeterSink, meter, METER_LEVELS, type MeterLevel, type MeterSink, type Tokenizer } from "../src/meter/meter";
+import { approximateTokenizer, DEFAULT_METER_LEVEL, estimatedSaving, memoryMeterSink, meter, METER_LEVELS, type MeterLevel, type MeterSink, type Tokenizer } from "../src/meter/meter";
+
+describe("the meter's default level (task 1.9.8, after Gate 1)", () => {
+  it("is summary when no level is named", () => {
+    expect(DEFAULT_METER_LEVEL).toBe("summary");
+    expect(meter({ sink: memoryMeterSink() }).level).toBe("summary");
+  });
+
+  it("is still off, or detailed, when that is named", () => {
+    expect(meter({ level: "off", sink: memoryMeterSink() }).level).toBe("off");
+    expect(meter({ level: "detailed", sink: memoryMeterSink() }).level).toBe("detailed");
+  });
+});
 
 /** Counts words, so the expected figures can be read off the test. Also counts how often it ran. */
 function wordTokenizer(): Tokenizer & { runs: number } {
