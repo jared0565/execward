@@ -27,6 +27,7 @@ import { attemptGate } from "../../src/code-tool/attempts";
 import { meter, memoryMeterSink } from "../../src/meter/meter";
 import { logMetricsSink } from "../../src/metrics/metrics";
 import { codeToolService } from "../../src/service";
+import { mcpAdapter, MCP_PATH } from "../../src/mcp/adapter";
 import { runScheduled } from "../../src/worker/scheduled";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
@@ -167,6 +168,33 @@ async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): 
   for (const statement of state.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
 }
 
+/**
+ * The code tool as production will serve it (src/service.ts), with every store on the database:
+ * policy table, project classes, switches, quota counters and the audit log. The tools are the invented GitHub.
+ */
+async function databaseService(env: { LOADER: WorkerLoader; DB: D1Like }) {
+  const db = env.DB as unknown as BackupDatabase & AuditDatabase & StateDatabase;
+  const { backend, pins } = await fixture();
+  const pinned = registry({ pins, current: async (path) => pins.find((pin) => pin.path === path)?.definition });
+  const auditStore = d1AuditStore(db);
+  const service = codeToolService({
+    executor: dynamicWorkerExecutor(env.LOADER),
+    policy: d1PolicyStore(env.DB),
+    projects: d1ProjectStore(db),
+    quotas: d1QuotaStore(db),
+    audit: auditStore,
+    control: d1ControlStore(db),
+    upstream: ({ record, args }) => backend.call(record.tool, args),
+    definitionFor: (record) => pinned.definitionFor(record),
+    docsFor: (path) => pinned.docsFor(path),
+    meter: meter({ level: "off", sink: memoryMeterSink() }),
+    metrics: logMetricsSink(),
+    now: () => Date.now(),
+    newRunId: () => crypto.randomUUID(),
+  });
+  return { service, auditStore };
+}
+
 export default {
   async fetch(request: Request, env: { LOADER: WorkerLoader; DB: D1Like; GITHUB_TOKEN?: string; BACKUPS?: BackupBucket }): Promise<Response> {
     const calls: { path: string; args: unknown }[] = [];
@@ -256,7 +284,7 @@ export default {
       // `setup` empties the tables and fills the policy; later requests run against what is there.
       const body = (await request.json()) as { setup?: boolean; codeMode?: boolean; projects?: number; verify?: boolean; input?: unknown };
       const db = env.DB as unknown as BackupDatabase & AuditDatabase & StateDatabase;
-      const { backend, pins, records } = await fixture();
+      const { records } = await fixture();
       if (body.setup) {
         await emptyTables(db);
         for (const record of records) await putPolicyRecord(env.DB, record);
@@ -269,28 +297,18 @@ export default {
         if (body.codeMode !== false) await control.write({ ...state, codeMode: true, version: state.version + 1 }, state.version);
         return Response.json({ ready: records.length });
       }
-      const pinned = registry({ pins, current: async (path) => pins.find((pin) => pin.path === path)?.definition });
-      const auditStore = d1AuditStore(db);
-      const service = codeToolService({
-        executor: dynamicWorkerExecutor(env.LOADER),
-        policy: d1PolicyStore(env.DB),
-        projects: d1ProjectStore(db),
-        quotas: d1QuotaStore(db),
-        audit: auditStore,
-        control: d1ControlStore(db),
-        upstream: ({ record, args }) => backend.call(record.tool, args),
-        definitionFor: (record) => pinned.definitionFor(record),
-        docsFor: (path) => pinned.docsFor(path),
-        meter: meter({ level: "off", sink: memoryMeterSink() }),
-        metrics: logMetricsSink(),
-        now: () => Date.now(),
-        newRunId: () => crypto.randomUUID(),
-      });
+      const { service, auditStore } = await databaseService(env);
       const output = await service(body.input, { providerRoute: "anthropic_api_commercial", attempts: attemptGate() });
       // Reading the whole log back is for tests. It is left out of a timed run.
       if (!body.verify) return Response.json({ output });
       const entries = await auditStore.all();
       return Response.json({ output, auditEntries: entries.length, chain: await verifyChain(entries, (await auditStore.anchor()) ?? undefined) });
+    }
+    if (route === MCP_PATH) {
+      // The MCP adapter over the same service (task 2.1.1). The caller is whoever passed this Worker's own
+      // gate; sign-in for model clients is task 2.1.2. Run `/service` with `setup` first.
+      const { service } = await databaseService(env);
+      return mcpAdapter({ service }).fetch(request, { providerRoute: "anthropic_api_commercial" });
     }
     if (route === "/adversarial") {
       // The adversarial suite against ExecWard itself, where the sandbox is real (FR-31, Gate 1).
