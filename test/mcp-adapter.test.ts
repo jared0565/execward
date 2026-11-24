@@ -31,7 +31,7 @@ function setup(reply: CodeToolOutput = { status: "completed", result: { answer: 
       return reply;
     },
   });
-  const fetch_ = (request: Request) => adapter.fetch(request, { providerRoute: "anthropic_api_commercial" });
+  const fetch_ = (request: Request) => adapter.serve(request, { providerRoute: "anthropic_api_commercial" });
   return { seen, fetch_ };
 }
 
@@ -172,7 +172,7 @@ describe("the MCP adapter (task 2.1.1, FR-10)", () => {
       },
     });
     for (const route of ["anthropic_api_commercial", "unknown"]) {
-      const client = await connect((request) => adapter.fetch(request, { providerRoute: route }));
+      const client = await connect((request) => adapter.serve(request, { providerRoute: route }));
       await client.callTool({ name: "code", arguments: { script: "return 1;", project: "work" } });
       await client.close();
     }

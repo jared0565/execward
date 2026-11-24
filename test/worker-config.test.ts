@@ -23,7 +23,10 @@ function good(): Record<string, unknown> {
     d1_databases: [{ binding: "DB", database_name: "execward", database_id: "33b54ace-0649-4949-abe5-dacd833dfe10", migrations_dir: "migrations" }],
     r2_buckets: [{ binding: "BACKUPS", bucket_name: "execward-backups" }],
     send_email: [{ name: "EMAIL", allowed_sender_addresses: ["alerts@notify.execward.com"] }],
-    routes: [{ pattern: "console.execward.com", custom_domain: true }],
+    routes: [
+      { pattern: "console.execward.com", custom_domain: true },
+      { pattern: "mcp.execward.com", custom_domain: true },
+    ],
     triggers: { crons: ["*/5 * * * *"] },
   };
 }

@@ -34,12 +34,12 @@ export interface McpCaller {
 
 export interface McpAdapter {
   /** Serves one MCP request for a caller who has already been identified. */
-  fetch(request: Request, caller: McpCaller): Promise<Response>;
+  serve(request: Request, caller: McpCaller): Promise<Response>;
 }
 
 export function mcpAdapter(deps: { readonly service: CodeToolService }): McpAdapter {
   return {
-    async fetch(request, caller) {
+    async serve(request, caller) {
       // A fresh server and handler for each request: nothing is shared between callers.
       const handler = createMcpHandler(() => {
         const server = new McpServer({ name: MCP_SERVER_NAME, version: CONTRACT_VERSION });
