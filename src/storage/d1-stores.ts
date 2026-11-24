@@ -15,6 +15,7 @@ import { checkProjectRecord, CLIENT_DATA_GATE, ProjectStoreError, type Gate, typ
 import type { QuotaStore } from "../broker/quotas";
 import type { AttemptState, AttemptStore } from "../code-tool/stored-attempts";
 import type { ExecWardError } from "../contracts/errors";
+import type { SettingsSeen, SettingsSeenStore } from "../mcp/switch-notice";
 import { INITIAL_CONTROL_STATE, type ControlState, type ControlStore } from "../console/control";
 import type { EscalationItem, EscalationStore } from "../console/escalations";
 import { DATA_CLASSES, type DataClass } from "../contracts/policy";
@@ -102,6 +103,22 @@ export function d1EscalationStore(db: StateDatabase): EscalationStore {
     },
     async all() {
       return (await db.prepare("SELECT item FROM escalations ORDER BY created_at, id").all<{ item: string }>()).results.map((row) => parse(row.item));
+    },
+  };
+}
+
+/** The switch settings each caller last saw (table in migrations/0005_switches_seen.sql). */
+export function d1SettingsSeenStore(db: StateDatabase): SettingsSeenStore {
+  return {
+    async get(key) {
+      const row = await db.prepare("SELECT settings FROM switches_seen WHERE key = ?1").bind(key).first<{ settings: string }>();
+      return row === null ? undefined : (JSON.parse(row.settings) as SettingsSeen);
+    },
+    async put(key, settings, now) {
+      await db
+        .prepare("INSERT INTO switches_seen (key, settings, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET settings = ?2, updated_at = ?3")
+        .bind(key, JSON.stringify(settings), now)
+        .run();
     },
   };
 }

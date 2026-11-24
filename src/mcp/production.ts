@@ -34,7 +34,8 @@ import { codeToolService, type CodeToolService } from "../service";
 import { attemptKey, storedAttemptGate } from "../code-tool/stored-attempts";
 import type { AttemptGate } from "../code-tool/attempts";
 import { escalationQueue, triggerFor } from "../console/escalations";
-import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, type StateDatabase } from "../storage/d1-stores";
+import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1SettingsSeenStore, type StateDatabase } from "../storage/d1-stores";
+import { switchNotices } from "./switch-notice";
 import { mcpAdapter, MCP_PATH } from "./adapter";
 
 /** The one address the MCP server answers at. */
@@ -156,5 +157,13 @@ export async function mcpResponse(
   // Which provider the client's model runs on is not known from sign-in (task 2.1.6), so the most cautious route applies.
   // With a service passed in and no count, a test is running: each call is then counted alone.
   const attempts = attemptsFor?.(principal.id) ?? (service === undefined ? productionAttempts(env, principal.id, now) : undefined);
-  return mcpAdapter({ service: service ?? (await productionService(env, now)) }).serve(request, { providerRoute: "unknown", ...(attempts === undefined ? {} : { attemptsFor: attempts }) });
+  // In production the caller is also told when a switch changed since their last call in the project.
+  const db = env.DB as StateDatabase;
+  const noticesFor =
+    service === undefined ? (project: string) => switchNotices({ store: d1SettingsSeenStore(db), control: d1ControlStore(db), now }, attemptKey(principal.id, project), project) : undefined;
+  return mcpAdapter({ service: service ?? (await productionService(env, now)) }).serve(request, {
+    providerRoute: "unknown",
+    ...(attempts === undefined ? {} : { attemptsFor: attempts }),
+    ...(noticesFor === undefined ? {} : { noticesFor }),
+  });
 }

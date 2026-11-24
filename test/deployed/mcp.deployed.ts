@@ -138,6 +138,56 @@ describe("the MCP adapter on Cloudflare (task 2.1.1)", { timeout: 120_000 }, () 
     await client.close();
   });
 
+  it("stops a call when any one switch is off, keeps the tool listed, and tells the client what changed on its next call (task 2.1.4, FR-18)", async () => {
+    const flip = async (change: object) => {
+      const response = await fetch(`${URL_BASE}/service`, { method: "POST", headers: AUTH, body: JSON.stringify({ flip: change }) });
+      expect(((await response.json()) as { changed: boolean }).changed).toBe(true);
+    };
+    const reply = (result: { content?: unknown }) =>
+      JSON.parse(text(result).split("<untrusted_tool_output>")[1]?.split("</untrusted_tool_output>")[0] ?? "{}") as { status: string; error?: { code: string }; notices?: string[] };
+    const run = async () => {
+      const client = await connect();
+      const result = reply(await client.callTool({ name: "code", arguments: { script: `return 1;`, project: "switch-test" } }));
+      const tools = (await client.listTools()).tools.map((tool) => tool.name);
+      await client.close();
+      return { ...result, tools };
+    };
+
+    try {
+      // The first call in a project: it runs, and there is nothing to compare with.
+      const first = await run();
+      expect(first.status).toBe("completed");
+      expect(first.notices).toBeUndefined();
+
+      // The project is paused while Code Mode stays on. The narrower "off" stops the call.
+      await flip({ pause: "switch-test" });
+      const paused = await run();
+      expect(paused.status).toBe("refused");
+      expect(paused.notices).toEqual([expect.stringMatching(/^This project was paused since your last call/)]);
+      // Told once, not on every call.
+      expect((await run()).notices).toBeUndefined();
+
+      // Resumed, and Code Mode switched off: the wider "off" stops it too, and the tool is still listed.
+      await flip({ resume: "switch-test", codeMode: false });
+      const off = await run();
+      expect(off.status).toBe("refused");
+      expect(off.error?.code).toBe("code_mode_off");
+      expect(off.tools).toEqual(["code"]);
+      expect(off.notices).toHaveLength(2);
+      expect(off.notices?.join(" ")).toMatch(/Code Mode was switched off/);
+      expect(off.notices?.join(" ")).toMatch(/This project was resumed/);
+
+      // Back on: the call runs again, and is told so.
+      await flip({ codeMode: true });
+      const on = await run();
+      expect(on.status).toBe("completed");
+      expect(on.notices).toEqual(["Code Mode was switched on since your last call in this project."]);
+    } finally {
+      // The tests after this one need Code Mode on, whatever happened above.
+      await fetch(`${URL_BASE}/service`, { method: "POST", headers: AUTH, body: JSON.stringify({ flip: { codeMode: true, resume: "switch-test" } }) });
+    }
+  });
+
   it("refuses a script the static check refuses, as an error result", async () => {
     const client = await connect();
     const result = await client.callTool({ name: "code", arguments: { script: `return fetch("https://example.com");`, project: "eval" } });

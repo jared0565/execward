@@ -10,8 +10,10 @@ import migration from "../../migrations/0001_policy.sql";
 import auditMigration from "../../migrations/0002_audit_log.sql";
 import stateMigration from "../../migrations/0003_state.sql";
 import attemptsMigration from "../../migrations/0004_attempts.sql";
+import seenMigration from "../../migrations/0005_switches_seen.sql";
+import { switchNotices } from "../../src/mcp/switch-notice";
 import { attemptKey, storedAttemptGate } from "../../src/code-tool/stored-attempts";
-import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, putProjectRecord, sweepQuotaCounters, type StateDatabase } from "../../src/storage/d1-stores";
+import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, putProjectRecord, sweepQuotaCounters, type StateDatabase, d1SettingsSeenStore } from "../../src/storage/d1-stores";
 import { applyRetention, auditLog, d1AuditStore, deleteProjectLogs, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
 import { BACKUP_TABLES, backUp, restore, type BackupBucket, type BackupDatabase } from "../../src/backup";
 import { brokerHost } from "../../src/broker/broker";
@@ -161,7 +163,7 @@ function fixture(): Promise<{ backend: ToolBackend; pins: Pin[]; records: Policy
 /** Drops every table and builds them again from the three migrations. */
 async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): Promise<void> {
   for (const name of ["audit_log_no_update", "audit_log_no_delete"]) await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).bind().run();
-  for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots", "attempt_state"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
+  for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots", "attempt_state", "switches_seen"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
   await db.prepare(migration).bind().run();
   for (const statement of auditMigration.split(/;\s*\n(?=CREATE)/)) await db.prepare(statement).bind().run();
   const state = stateMigration
@@ -169,16 +171,19 @@ async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): 
     .filter((line) => !line.trim().startsWith("--"))
     .join("\n");
   for (const statement of state.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
-  await db
-    .prepare(
-      attemptsMigration
-        .split("\n")
-        .filter((line) => !line.trim().startsWith("--"))
-        .join("\n")
-        .replace(";", ""),
-    )
-    .bind()
-    .run();
+  // Each of these is one statement.
+  for (const sql of [attemptsMigration, seenMigration]) {
+    await db
+      .prepare(
+        sql
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("--"))
+          .join("\n")
+          .replace(";", ""),
+      )
+      .bind()
+      .run();
+  }
 }
 
 /**
@@ -295,7 +300,7 @@ export default {
       // The code tool as production will serve it (src/service.ts), with every store on the
       // database: policy table, project classes, switches, quota counters and the audit log.
       // `setup` empties the tables and fills the policy; later requests run against what is there.
-      const body = (await request.json()) as { setup?: boolean; codeMode?: boolean; projects?: number; verify?: boolean; input?: unknown };
+      const body = (await request.json()) as { setup?: boolean; codeMode?: boolean; projects?: number; verify?: boolean; input?: unknown; flip?: { codeMode?: boolean; pause?: string; resume?: string } };
       const db = env.DB as unknown as BackupDatabase & AuditDatabase & StateDatabase;
       const { records } = await fixture();
       if (body.setup) {
@@ -309,6 +314,16 @@ export default {
         const state = await control.read();
         if (body.codeMode !== false) await control.write({ ...state, codeMode: true, version: state.version + 1 }, state.version);
         return Response.json({ ready: records.length });
+      }
+      if (body.flip) {
+        // Changes one switch and nothing else, as the owner would from the console (task 2.1.4).
+        const control = d1ControlStore(db);
+        const state = await control.read();
+        const paused = new Set(state.pausedProjects);
+        if (body.flip.pause) paused.add(body.flip.pause);
+        if (body.flip.resume) paused.delete(body.flip.resume);
+        const next = { ...state, codeMode: body.flip.codeMode ?? state.codeMode, pausedProjects: [...paused], version: state.version + 1 };
+        return Response.json({ changed: await control.write(next, state.version) });
       }
       const { service, auditStore } = await databaseService(env);
       const output = await service(body.input, { providerRoute: "anthropic_api_commercial", attempts: attemptGate() });
@@ -326,6 +341,12 @@ export default {
       return mcpAdapter({ service }).serve(request, {
         providerRoute: "anthropic_api_commercial",
         attemptsFor: (project) => storedAttemptGate({ store: attempts, now: () => Date.now() }, attemptKey("test-client", project)),
+        noticesFor: (project) =>
+          switchNotices(
+            { store: d1SettingsSeenStore(env.DB as unknown as StateDatabase), control: d1ControlStore(env.DB as unknown as StateDatabase), now: () => Date.now() },
+            attemptKey("test-client", project),
+            project,
+          ),
       });
     }
     if (route === "/adversarial") {
