@@ -25,7 +25,7 @@ import type { ToolBackend } from "../../src/eval/types";
 import { escalationQueue } from "../../src/console/escalations";
 import { attemptGate } from "../../src/code-tool/attempts";
 import { meter, memoryMeterSink } from "../../src/meter/meter";
-import { memoryMetricsSink } from "../../src/metrics/metrics";
+import { logMetricsSink } from "../../src/metrics/metrics";
 import { codeToolService } from "../../src/service";
 import { runScheduled } from "../../src/worker/scheduled";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
@@ -281,7 +281,7 @@ export default {
         definitionFor: (record) => pinned.definitionFor(record),
         docsFor: (path) => pinned.docsFor(path),
         meter: meter({ level: "off", sink: memoryMeterSink() }),
-        metrics: memoryMetricsSink(),
+        metrics: logMetricsSink(),
         now: () => Date.now(),
         newRunId: () => crypto.randomUUID(),
       });

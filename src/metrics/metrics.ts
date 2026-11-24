@@ -44,6 +44,26 @@ export function memoryMetricsSink(): MetricsSink & { readonly metrics: RunMetric
   return { metrics, export: async (metric) => void metrics.push(metric) };
 }
 
+/** The name every metric line carries, so the lines can be found among other logs. */
+export const METRIC_EVENT = "execward_run";
+
+/**
+ * Sends each metric to the platform's log as one structured line (owner's
+ * decision, 2026-11-24: Cloudflare Workers Logs is the monitoring stack).
+ * Writing a line never throws: a metric can never fail a run.
+ */
+export function logMetricsSink(write: (line: Readonly<Record<string, unknown>>) => void = (line) => console.log(line)): MetricsSink {
+  return {
+    async export(metric) {
+      try {
+        write({ event: METRIC_EVENT, ...metric });
+      } catch {
+        // Losing a metric line is better than losing the run.
+      }
+    },
+  };
+}
+
 export function metricFor(output: CodeToolOutput, project: string, metered?: MeterRecord): RunMetric {
   const error = output.status === "error" || output.status === "refused" ? output.error : undefined;
   const report = output.report;
