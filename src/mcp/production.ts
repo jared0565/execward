@@ -22,10 +22,14 @@
  */
 import { d1AuditStore, type AuditDatabase } from "../audit/log";
 import { d1PolicyStore, type D1Like } from "../broker/policy-store";
+import { githubPinsAndPolicy, githubUpstream } from "../connectors/github";
+import { githubAppToken, type GithubAppSettings } from "../connectors/github-app";
 import { principalFromAccess, type AccessContext } from "../console/access";
 import type { WorkerLoader } from "../executor/dynamic-worker";
 import { meter, type MeterSink } from "../meter/meter";
 import { logMetricsSink } from "../metrics/metrics";
+import { outboundFetch } from "../net/outbound";
+import { registry } from "../registry/registry";
 import { codeToolService, type CodeToolService } from "../service";
 import { d1ControlStore, d1ProjectStore, d1QuotaStore, type StateDatabase } from "../storage/d1-stores";
 import { mcpAdapter, MCP_PATH } from "./adapter";
@@ -38,7 +42,18 @@ export interface McpEnv {
   readonly DB: unknown;
   readonly MCP_ACCESS_AUD?: string;
   readonly OWNER_EMAIL?: string;
+  readonly GITHUB_APP_ID?: string;
+  readonly GITHUB_APP_INSTALLATION_ID?: string;
+  readonly GITHUB_APP_PRIVATE_KEY?: string;
 }
+
+/**
+ * The GitHub App's settings as the latest request's environment gives them, and the one
+ * token source that reads them. The source lives as long as this isolate, so an
+ * installation token is minted about once an hour and not once a request.
+ */
+let githubSettings: GithubAppSettings = { appId: undefined, installationId: undefined, privateKeyPem: undefined };
+const githubToken = githubAppToken({ settings: () => githubSettings, fetch: outboundFetch(), now: () => Date.now() });
 
 /** Each run's token estimate, as one line in the platform's log, beside its metric line. */
 const logMeterSink: MeterSink = {
@@ -56,6 +71,10 @@ export async function productionService(env: McpEnv, now: () => number): Promise
   const db = env.DB as StateDatabase & AuditDatabase;
   // Loaded when first needed: the sandbox module exists only inside the Workers runtime.
   const { dynamicWorkerExecutor } = await import("../executor/dynamic-worker");
+  githubSettings = { appId: env.GITHUB_APP_ID, installationId: env.GITHUB_APP_INSTALLATION_ID, privateKeyPem: env.GITHUB_APP_PRIVATE_KEY };
+  // The GitHub tools' definitions are pinned from this build. Which of them may be called is the policy table's say.
+  const { pins } = await githubPinsAndPolicy();
+  const pinned = registry({ pins, current: async (path) => pins.find((pin) => pin.path === path)?.definition });
   return codeToolService({
     executor: dynamicWorkerExecutor(env.LOADER as WorkerLoader),
     policy: d1PolicyStore(env.DB as D1Like),
@@ -63,12 +82,11 @@ export async function productionService(env: McpEnv, now: () => number): Promise
     quotas: d1QuotaStore(db),
     audit: d1AuditStore(db),
     control: d1ControlStore(db),
-    // No upstream is connected to production yet. With no tool in the policy table, no call reaches these.
-    upstream: async () => {
-      throw new Error("no upstream is connected");
-    },
-    definitionFor: async () => undefined,
-    docsFor: async () => undefined,
+    // GitHub, read-only, through the guarded fetch. Until the App's three settings are stored, every call
+    // fails with "no credential"; until a tool is in the policy table, no call gets this far.
+    upstream: githubUpstream({ token: githubToken, fetch: outboundFetch() }),
+    definitionFor: (record) => pinned.definitionFor(record),
+    docsFor: (path) => pinned.docsFor(path),
     // No level named: the default, summary since Gate 1.
     meter: meter({ sink: logMeterSink }),
     metrics: logMetricsSink(),

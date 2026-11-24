@@ -227,8 +227,11 @@ export function githubRequestUrl(tool: string, args: unknown): string {
 }
 
 export interface GithubConnectorDeps {
-  /** Reads the credential from the secret store, at the moment a request is sent. */
-  readonly token: () => string | undefined;
+  /**
+   * Gives the credential at the moment a request is sent: a token read from the secret
+   * store, or one minted for a GitHub App (./github-app.ts). `undefined` when there is none.
+   */
+  readonly token: () => string | undefined | Promise<string | undefined>;
   readonly fetch: (url: string, init: { method: "GET"; headers: Record<string, string>; redirect: "manual" }) => Promise<Response>;
 }
 
@@ -247,7 +250,7 @@ export function githubUpstream(deps: GithubConnectorDeps): Upstream {
   return async ({ record, args }) => {
     if (record.server !== "github") throw new Error(`the GitHub connector was given a call for "${record.server}"`);
     const url = githubRequestUrl(record.tool, args);
-    const token = deps.token();
+    const token = await deps.token();
     if (typeof token !== "string" || token === "") throw new UpstreamToolError("the GitHub connector has no credential");
     // Nothing GitHub says may carry the credential back to the script.
     const scrub = (text: string): string => text.split(token).join("[removed]");

@@ -461,8 +461,8 @@ describe("the secrets the deployed Worker may hold", () => {
   const live: DeployedVersion = { bindings: [], compatibilityDate: undefined, secrets: [] };
   const secretProblems = (version: DeployedVersion) => deployedProblems(version).filter((problem) => /secret|not on the allowlist/.test(problem));
 
-  it("are the three that say who the owner is and which sign-in a request came through, and no credential", () => {
-    expect(ALLOWED_SECRETS).toEqual(["ACCESS_AUD", "MCP_ACCESS_AUD", "OWNER_EMAIL"]);
+  it("are the three that say who the owner is and which sign-in a request came through, and the GitHub App", () => {
+    expect(ALLOWED_SECRETS).toEqual(["ACCESS_AUD", "MCP_ACCESS_AUD", "OWNER_EMAIL", "GITHUB_APP_ID", "GITHUB_APP_INSTALLATION_ID", "GITHUB_APP_PRIVATE_KEY"]);
   });
 
   it("allows those, listed either way, and still refuses any other", () => {
