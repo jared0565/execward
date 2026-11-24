@@ -17,8 +17,14 @@ import { join } from "node:path";
 import { auditExport, recheck, type AuditExport, type AuditRow } from "../src/audit/export";
 import type { ChainAnchor, ChainCheck } from "../src/audit/log";
 
+const args = process.argv.slice(2);
+/** `--database NAME` reads another database, which is how the emergency stop is tested. */
+const databaseAt = args.indexOf("--database");
+const database = databaseAt === -1 ? "execward" : (args[databaseAt + 1] ?? "");
+if (!/^[a-z0-9-]+$/.test(database)) throw new Error("the database name is not valid");
+
 function query<T>(sql: string): T[] {
-  const out = execFileSync("npx", ["wrangler", "d1", "execute", "execward", "--remote", "--json", "--command", `"${sql}"`], {
+  const out = execFileSync("npx", ["wrangler", "d1", "execute", database, "--remote", "--json", "--command", `"${sql}"`], {
     encoding: "utf8",
     shell: true,
     stdio: ["ignore", "pipe", "ignore"],
@@ -41,7 +47,6 @@ function report(check: ChainCheck): boolean {
   return false;
 }
 
-const args = process.argv.slice(2);
 const checkAt = args.indexOf("--check");
 
 if (checkAt !== -1) {
@@ -53,7 +58,7 @@ if (checkAt !== -1) {
 } else {
   const rows = query<AuditRow>("SELECT seq, at, kind, run_id, project, security, content, content_hash, prev_hash, hash FROM audit_log ORDER BY seq");
   const anchors = query<ChainAnchor>("SELECT seq, hash FROM audit_anchor WHERE id = 1");
-  const exported = await auditExport(rows, anchors[0], "production");
+  const exported = await auditExport(rows, anchors[0], database === "execward" ? "production" : database);
   const dir = join(homedir(), ".execward", "audit-exports");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `audit-${exported.exportedAt.replaceAll(":", "-")}.json`);
