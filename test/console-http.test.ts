@@ -3,6 +3,7 @@ import { auditLog, memoryAuditStore } from "../src/audit/log";
 import { principalFromAccess, type AccessContext } from "../src/console/access";
 import { ownerConsole, TWO_FACTOR_MAX_AGE_MS, type Principal } from "../src/console/console";
 import { memoryControlStore, type ControlState } from "../src/console/control";
+import { escalationQueue, memoryEscalationStore } from "../src/console/escalations";
 import { CONSOLE_HEADER, consoleResponse } from "../src/console/http";
 import { consolePage } from "../src/console/page";
 import { handle } from "../src/worker";
@@ -73,15 +74,18 @@ describe("who Cloudflare Access says is asking (task 1.6.1, FR-49)", () => {
 function setup(principal: Principal = { kind: "owner", id: "owner:1", twoFactorAt: NOW - 1000 }) {
   const control = memoryControlStore();
   const store = memoryAuditStore();
-  const console_ = ownerConsole({ control, audit: auditLog(store, () => NOW), now: () => NOW });
-  const send = (path: string, init?: RequestInit) => consoleResponse(new Request(`https://console.example.test${path}`, init), { console: console_, principal, nonce: () => "testnonce" });
+  const audit = auditLog(store, () => NOW);
+  const console_ = ownerConsole({ control, audit, now: () => NOW });
+  let ids = 0;
+  const queue = escalationQueue({ store: memoryEscalationStore(), control, audit, now: () => NOW, newId: () => `item-${++ids}` });
+  const send = (path: string, init?: RequestInit) => consoleResponse(new Request(`https://console.example.test${path}`, init), { console: console_, queue, principal, nonce: () => "testnonce" });
   const post = (body: unknown, headers: Record<string, string> = {}) =>
     send("/console/action", {
       method: "POST",
       headers: { origin: "https://console.example.test", "content-type": "application/json", [CONSOLE_HEADER]: "1", ...headers },
       body: typeof body === "string" ? body : JSON.stringify(body),
     });
-  return { control, store, send, post };
+  return { control, store, send, post, queue };
 }
 
 interface Reply {
@@ -227,6 +231,82 @@ describe("the console over HTTP (tasks 1.6.1 to 1.6.5)", () => {
     const response = (await consoleResponse(new Request("https://c.example.test/console/state"), { console: broken, principal: { kind: "anonymous" }, nonce: () => "n" })) as Response;
     expect(response.status).toBe(500);
     expect(await response.text()).not.toMatch(/D1_ERROR|control_state|10\.0\.0\.7/);
+  });
+});
+
+describe("the escalation queue in the console (tasks 1.6.6, 1.6.9)", () => {
+  const SECRET_TEXT = "client secret: the Henderson contract is worth 4m";
+
+  it("shows the owner what is waiting, with the options and the recommendation, and not the run's contents", async () => {
+    const { send, queue } = setup();
+    await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1", error: { code: "sandbox_fault", message: SECRET_TEXT } });
+    const response = (await send("/console/queue")) as Response;
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).not.toContain("Henderson");
+    const listed = JSON.parse(text) as { items: Record<string, unknown>[]; proposals: unknown[] };
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0]).toMatchObject({ id: "item-1", trigger: "security_exception", project: "acme", urgent: true, errorCode: "sandbox_fault" });
+    expect(Object.keys(listed.items[0] as object)).not.toContain("report");
+    expect(Object.keys(listed.items[0] as object)).not.toContain("error");
+    expect((listed.items[0] as { options: unknown[] }).options.length).toBeGreaterThan(1);
+    expect(listed.proposals).toEqual([]);
+  });
+
+  it("records the owner's choice, and the item leaves the queue", async () => {
+    const { send, post, queue, control } = setup();
+    const item = await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1" });
+    // Raising a security exception pauses the project by itself.
+    expect(control.current().pausedProjects).toEqual(["acme"]);
+    // "False positive" lifts a protection, so it needs a written reason.
+    expect(((await post({ action: "resolve", id: item.id, option: "false_positive" })) as Response).status).toBe(409);
+    expect(control.current().pausedProjects).toEqual(["acme"]);
+    const reply = (await post({ action: "resolve", id: item.id, option: "false_positive", reason: "reviewed the log" })) as Response;
+    expect(reply.status).toBe(200);
+    const replied = (await reply.json()) as { resolved: unknown; state: { pausedProjects: string[] } };
+    expect(replied.resolved).toEqual({ id: "item-1", status: "resolved" });
+    expect(replied.state.pausedProjects).toEqual([]);
+    const after = (await ((await send("/console/queue")) as Response).json()) as { items: unknown[] };
+    expect(after.items).toEqual([]);
+  });
+
+  it("keeps an item in the queue, and the project paused, when the owner chooses to keep it paused", async () => {
+    const { send, post, queue, control } = setup();
+    const item = await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1" });
+    const reply = (await post({ action: "resolve", id: item.id, option: "keep_paused" })) as Response;
+    expect(((await reply.json()) as { resolved: unknown }).resolved).toEqual({ id: "item-1", status: "open" });
+    expect(control.current().pausedProjects).toEqual(["acme"]);
+    const after = (await ((await send("/console/queue")) as Response).json()) as { items: { acknowledgedAt?: number }[] };
+    expect(after.items).toHaveLength(1);
+    expect(after.items[0]?.acknowledgedAt).toBe(NOW);
+  });
+
+  it.each<[string, Record<string, unknown>, number]>([
+    ["an item that does not exist", { action: "resolve", id: "item-99", option: "x" }, 409],
+    ["an option the item does not have", { action: "resolve", id: "item-1", option: "do_anything" }, 409],
+    ["no item named", { action: "resolve", option: "x" }, 400],
+    ["no option named", { action: "resolve", id: "item-1" }, 400],
+  ])("refuses a choice on %s", async (_label, sent, status) => {
+    const { post, queue, send } = setup();
+    await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1" });
+    expect(((await post(sent)) as Response).status).toBe(status);
+    expect(((await ((await send("/console/queue")) as Response).json()) as { items: unknown[] }).items).toHaveLength(1);
+  });
+
+  it("refuses the queue and any choice to anyone but the signed-in owner", async () => {
+    for (const principal of [{ kind: "anonymous" }, { kind: "model_client", id: "mcp" }, { kind: "owner", id: "o", twoFactorAt: undefined }] as Principal[]) {
+      const { send, post, queue } = setup(principal);
+      const item = await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1" });
+      expect(((await send("/console/queue")) as Response).status).toBe(403);
+      expect(((await post({ action: "resolve", id: item.id, option: item.options[0]?.id, reason: "x" })) as Response).status).toBe(403);
+    }
+  });
+
+  it("draws each item on the page as text", () => {
+    const page = consolePage("n");
+    expect(page).toContain("Waiting for you");
+    expect(page).toContain("textContent");
+    expect(page).not.toMatch(/innerHTML|insertAdjacentHTML/);
   });
 });
 
