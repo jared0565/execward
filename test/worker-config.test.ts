@@ -22,6 +22,7 @@ function good(): Record<string, unknown> {
     worker_loaders: [{ binding: "LOADER" }],
     d1_databases: [{ binding: "DB", database_name: "execward", database_id: "33b54ace-0649-4949-abe5-dacd833dfe10", migrations_dir: "migrations" }],
     r2_buckets: [{ binding: "BACKUPS", bucket_name: "execward-backups" }],
+    routes: [{ pattern: "console.execward.com", custom_domain: true }],
     triggers: { crons: ["*/5 * * * *"] },
   };
 }
@@ -50,12 +51,30 @@ describe("workerConfigProblems", () => {
     ["a Durable Object", { durable_objects: { bindings: [{ name: "DO", class_name: "X" }] } }],
     ["an environment value", { vars: { API_BASE: "https://example.com" } }],
     ["a named environment", { env: { staging: { kv_namespaces: [{ binding: "CACHE", id: "abc" }] } } }],
-    ["a route", { routes: ["example.com/*"] }],
     ["a binding type that does not exist yet", { future_bindings: [{ binding: "X" }] }],
   ])("refuses %s", (_label, extra) => {
     const problems = workerConfigProblems({ ...good(), ...extra }, TODAY);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain("is not on the allowlist");
+  });
+
+  it.each([
+    ["another address", [{ pattern: "example.com/*", zone_name: "example.com" }]],
+    ["a second address beside the console's", [{ pattern: "console.execward.com", custom_domain: true }, { pattern: "api.execward.com", custom_domain: true }]],
+    ["the whole domain", [{ pattern: "execward.com/*", zone_name: "execward.com" }]],
+    ["a wildcard", [{ pattern: "*.execward.com/*", zone_name: "execward.com" }]],
+    ["the console's address as a plain route", ["console.execward.com/*"]],
+    ["no address", []],
+    ["a missing list", undefined],
+  ])("refuses %s: the console's address behind Access is the only way in", (_label, routes) => {
+    const problems = workerConfigProblems({ ...good(), routes }, TODAY);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('"routes" must be exactly');
+  });
+
+  it("refuses a workers.dev address, which Access on the console's hostname would not guard", () => {
+    expect(workerConfigProblems({ ...good(), workers_dev: true }, TODAY)).toEqual(['"workers_dev" must be false, found true']);
+    expect(workerConfigProblems({ ...good(), preview_urls: true }, TODAY)).toEqual(['"preview_urls" must be false, found true']);
   });
 
   it("refuses a second database or bucket, under any name", () => {

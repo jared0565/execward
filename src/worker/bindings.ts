@@ -44,6 +44,13 @@ export const ALLOWED_BINDINGS: readonly AllowedBinding[] = [
 export const ALLOWED_TRIGGERS = { crons: ["*/5 * * * *"] } as const;
 
 /**
+ * The one address the Worker answers at: the owner console, behind Cloudflare
+ * Access (task 1.6.1). The configuration's "routes" must be exactly this. Another
+ * address would be a way in that Access does not guard.
+ */
+export const ALLOWED_ROUTES = [{ pattern: "console.execward.com", custom_domain: true }] as const;
+
+/**
  * Config keys that are not bindings and are allowed, with the value each must
  * have where that matters. Anything not here and not a section named in
  * `ALLOWED_BINDINGS` is refused, so a kind of binding this file has never
@@ -53,7 +60,7 @@ export const ALLOWED_SETTINGS = {
   $schema: "node_modules/wrangler/config-schema.json",
   name: "execward",
   main: "src/worker.ts",
-  /** Off until sign-in exists: the Worker has no public address. */
+  /** Off: the Worker's only address is the one in `ALLOWED_ROUTES`. */
   workers_dev: false,
   preview_urls: false,
   /** No usage data is sent to the tool's vendor from this repository. */
