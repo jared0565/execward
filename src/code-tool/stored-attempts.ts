@@ -43,7 +43,14 @@ export interface AttemptStore {
    * `staleBefore` starts again from one.
    */
   fail(key: string, now: number, staleBefore: number): Promise<number>;
-  close(key: string, closed: ExecWardError, escalationId: string | undefined, now: number): Promise<void>;
+  /**
+   * Closes the key, unless it is closed already. Returns true only to the one
+   * caller that closed it, so that of several runs failing together exactly
+   * one tells the owner.
+   */
+  close(key: string, closed: ExecWardError, now: number): Promise<boolean>;
+  /** Notes which queue item the closure raised. */
+  setEscalation(key: string, escalationId: string): Promise<void>;
   /** Records that an attempt was made, without changing anything else. */
   touch(key: string, now: number): Promise<void>;
   clear(key: string): Promise<void>;
@@ -60,8 +67,15 @@ export function memoryAttemptStore(): AttemptStore & { readonly states: Map<stri
       states.set(key, { ...(before?.closed ? { closed: before.closed } : {}), ...(before?.escalationId ? { escalationId: before.escalationId } : {}), failures, updatedAt: now });
       return failures;
     },
-    async close(key, closed, escalationId, now) {
-      states.set(key, { failures: states.get(key)?.failures ?? 0, closed, ...(escalationId === undefined ? {} : { escalationId }), updatedAt: now });
+    async close(key, closed, now) {
+      const before = states.get(key);
+      if (before?.closed !== undefined) return false;
+      states.set(key, { failures: before?.failures ?? 0, closed, updatedAt: now });
+      return true;
+    },
+    async setEscalation(key, escalationId) {
+      const before = states.get(key);
+      if (before !== undefined) states.set(key, { ...before, escalationId });
     },
     async touch(key, now) {
       const before = states.get(key);
@@ -118,13 +132,17 @@ export async function storedAttemptGate(deps: StoredAttemptDeps, key: string): P
 
   async function close(reason: Escalation["reason"], error: ExecWardError, runId: string, refusal: ExecWardError): Promise<void> {
     closed = refusal;
-    let escalationId: string | undefined;
+    // Written before anyone is told: the next run must find it closed, and telling the owner takes time.
+    // Seen on production on 2026-11-24, when it was written after: a run started in the gap and ran.
+    const first = await deps.store.close(key, refusal, deps.now());
+    // Another run failing at the same moment closed it first and is telling the owner.
+    if (!first) return;
     try {
-      escalationId = await deps.escalate?.({ reason, error, runId });
+      const escalationId = await deps.escalate?.({ reason, error, runId });
+      if (escalationId !== undefined) await deps.store.setEscalation(key, escalationId);
     } catch {
       // Closed whether or not anyone could be told.
     }
-    await deps.store.close(key, refusal, escalationId, deps.now());
   }
 
   return {

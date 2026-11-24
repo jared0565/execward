@@ -148,8 +148,31 @@ describe("the retry limit kept between requests (task 2.1.5, FR-41)", () => {
     await Promise.all(gates.map((gate, index) => gate.settle(failed("script_error", `run-${index}`))));
     expect(store.states.get(KEY)?.failures).toBe(4);
     expect(store.states.get(KEY)?.closed?.code).toBe("quota_exceeded");
-    expect(escalations.length).toBeGreaterThanOrEqual(1);
+    // Exactly one of them tells the owner. On production on 2026-11-24 two did.
+    expect(escalations).toHaveLength(1);
+    expect(store.states.get(KEY)?.escalationId).toBe("item-1");
     expect((await storedAttemptGate(deps, KEY)).blocked()).toBeDefined();
+  });
+
+  it("is found closed by a run that starts while the owner is still being told", async () => {
+    // What happened on production on 2026-11-24: the closure was written only after the queue item was raised,
+    // and a run that started in between was let through.
+    const { deps, store } = setup();
+    store.states.set(KEY, { failures: 2, updatedAt: START });
+    let duringTelling: Promise<boolean> | undefined;
+    const gate = await storedAttemptGate(
+      {
+        ...deps,
+        escalate: async (escalation) => {
+          duringTelling = storedAttemptGate(deps, KEY).then((next) => next.blocked() !== undefined);
+          await duringTelling;
+          return deps.escalate(escalation);
+        },
+      },
+      KEY,
+    );
+    await gate.settle(failed());
+    expect(await duringTelling).toBe(true);
   });
 
   it("stays closed when the owner could not be told", async () => {
