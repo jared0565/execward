@@ -154,13 +154,18 @@ export function d1AttemptStore(db: StateDatabase): AttemptStore {
       if (row === null) throw new Error("the attempt count could not be written");
       return row.failures;
     },
-    async close(key, closed, escalationId, now) {
-      await db
+    async close(key, closed, now) {
+      // One statement: of several runs closing at once, only the first gets a row back.
+      const row = await db
         .prepare(
-          "INSERT INTO attempt_state (key, failures, closed, escalation_id, updated_at) VALUES (?1, 0, ?2, ?3, ?4) ON CONFLICT(key) DO UPDATE SET closed = ?2, escalation_id = ?3, updated_at = ?4",
+          "INSERT INTO attempt_state (key, failures, closed, updated_at) VALUES (?1, 0, ?2, ?3) ON CONFLICT(key) DO UPDATE SET closed = ?2, updated_at = ?3 WHERE attempt_state.closed IS NULL RETURNING key",
         )
-        .bind(key, JSON.stringify(closed), escalationId ?? null, now)
-        .run();
+        .bind(key, JSON.stringify(closed), now)
+        .first<{ key: string }>();
+      return row !== null;
+    },
+    async setEscalation(key, escalationId) {
+      await db.prepare("UPDATE attempt_state SET escalation_id = ?2 WHERE key = ?1").bind(key, escalationId).run();
     },
     async touch(key, now) {
       await db.prepare("UPDATE attempt_state SET updated_at = ?2 WHERE key = ?1").bind(key, now).run();
