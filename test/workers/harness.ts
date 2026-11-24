@@ -9,7 +9,9 @@ import type { ExecutionLimits } from "../../src/executor";
 import migration from "../../migrations/0001_policy.sql";
 import auditMigration from "../../migrations/0002_audit_log.sql";
 import stateMigration from "../../migrations/0003_state.sql";
-import { d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, putProjectRecord, sweepQuotaCounters, type StateDatabase } from "../../src/storage/d1-stores";
+import attemptsMigration from "../../migrations/0004_attempts.sql";
+import { attemptKey, storedAttemptGate } from "../../src/code-tool/stored-attempts";
+import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, putProjectRecord, sweepQuotaCounters, type StateDatabase } from "../../src/storage/d1-stores";
 import { applyRetention, auditLog, d1AuditStore, deleteProjectLogs, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
 import { BACKUP_TABLES, backUp, restore, type BackupBucket, type BackupDatabase } from "../../src/backup";
 import { brokerHost } from "../../src/broker/broker";
@@ -159,7 +161,7 @@ function fixture(): Promise<{ backend: ToolBackend; pins: Pin[]; records: Policy
 /** Drops every table and builds them again from the three migrations. */
 async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): Promise<void> {
   for (const name of ["audit_log_no_update", "audit_log_no_delete"]) await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).bind().run();
-  for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
+  for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots", "attempt_state"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
   await db.prepare(migration).bind().run();
   for (const statement of auditMigration.split(/;\s*\n(?=CREATE)/)) await db.prepare(statement).bind().run();
   const state = stateMigration
@@ -167,6 +169,16 @@ async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): 
     .filter((line) => !line.trim().startsWith("--"))
     .join("\n");
   for (const statement of state.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
+  await db
+    .prepare(
+      attemptsMigration
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n")
+        .replace(";", ""),
+    )
+    .bind()
+    .run();
 }
 
 /**
@@ -308,8 +320,13 @@ export default {
     if (route === MCP_PATH) {
       // The MCP adapter over the same service (task 2.1.1). The caller is whoever passed this Worker's own
       // gate; sign-in for model clients is task 2.1.2. Run `/service` with `setup` first.
+      // Failed runs in a row are counted in the database, per project, as production counts them (task 2.1.5).
       const { service } = await databaseService(env);
-      return mcpAdapter({ service }).serve(request, { providerRoute: "anthropic_api_commercial" });
+      const attempts = d1AttemptStore(env.DB as unknown as StateDatabase);
+      return mcpAdapter({ service }).serve(request, {
+        providerRoute: "anthropic_api_commercial",
+        attemptsFor: (project) => storedAttemptGate({ store: attempts, now: () => Date.now() }, attemptKey("test-client", project)),
+      });
     }
     if (route === "/adversarial") {
       // The adversarial suite against ExecWard itself, where the sandbox is real (FR-31, Gate 1).

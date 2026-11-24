@@ -7,8 +7,8 @@
  *
  * One gate covers one task: one request from the user, however many times the
  * model calls the `code` tool for it. The in-app adapter makes a gate per
- * task. Through the MCP adapter the count is per session and arrives in
- * Phase 2, because the server cannot see where one task ends.
+ * task. Through the MCP adapter the server cannot see where one task ends,
+ * so the count is kept per caller and project: see ./stored-attempts.ts.
  */
 import type { CodeToolOutput } from "../contracts/code-tool";
 import { ERROR_CODES, type ExecWardError } from "../contracts/errors";
