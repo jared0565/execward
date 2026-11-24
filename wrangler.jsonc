@@ -12,7 +12,7 @@
 	// Pinned (FR-23). Must equal COMPATIBILITY_DATE in src/worker/bindings.ts.
 	"compatibility_date": "2026-11-13",
 	"compatibility_flags": [],
-	// Not reachable from the internet until sign-in exists (Phase 2).
+	// No workers.dev address. The Worker is reached at one address only, below.
 	"workers_dev": false,
 	"preview_urls": false,
 	"send_metrics": false,
@@ -40,6 +40,14 @@
 		{
 			"binding": "BACKUPS",
 			"bucket_name": "execward-backups"
+		}
+	],
+	// The owner console's address. Cloudflare Access guards the whole hostname, and the
+	// Worker refuses any console request Access did not authenticate (src/console/access.ts).
+	"routes": [
+		{
+			"pattern": "console.execward.com",
+			"custom_domain": true
 		}
 	],
 	// The housekeeping timer: every five minutes (src/worker/scheduled.ts).

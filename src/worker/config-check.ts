@@ -9,6 +9,7 @@
 import {
   ALLOWED_BINDINGS,
   ALLOWED_COMPATIBILITY_FLAGS,
+  ALLOWED_ROUTES,
   ALLOWED_SETTINGS,
   ALLOWED_TRIGGERS,
   COMPATIBILITY_DATE,
@@ -59,7 +60,7 @@ export function workerConfigProblems(config: unknown, today: Date = new Date()):
   const problems: string[] = [];
 
   const bindingSections = new Set<string>(ALLOWED_BINDINGS.map((entry) => entry.section));
-  const structured = new Set(["compatibility_date", "compatibility_flags", "observability", "triggers"]);
+  const structured = new Set(["compatibility_date", "compatibility_flags", "observability", "triggers", "routes"]);
   for (const key of Object.keys(config)) {
     if (key in ALLOWED_SETTINGS || bindingSections.has(key) || structured.has(key)) continue;
     problems.push(`"${key}" is not on the allowlist`);
@@ -97,6 +98,10 @@ export function workerConfigProblems(config: unknown, today: Date = new Date()):
   const observability = config.observability;
   if (!isRecord(observability) || observability.enabled !== true || Object.keys(observability).length !== 1) {
     problems.push(`"observability" must be exactly { "enabled": true }`);
+  }
+
+  if (JSON.stringify(config.routes) !== JSON.stringify(ALLOWED_ROUTES)) {
+    problems.push(`"routes" must be exactly ${JSON.stringify(ALLOWED_ROUTES)}`);
   }
 
   if (JSON.stringify(config.triggers) !== JSON.stringify(ALLOWED_TRIGGERS)) {
