@@ -8,11 +8,47 @@ import { DIGEST_SUBJECT, notifier, URGENT_SUBJECT, type Email } from "../src/con
 import type { ExecutionOutcome, Executor } from "../src/executor";
 import { runMaintenance } from "../src/maintenance";
 import { memoryMeterSink, meter } from "../src/meter/meter";
-import { memoryMetricsSink, type MetricsSink } from "../src/metrics/metrics";
+import { logMetricsSink, memoryMetricsSink, METRIC_EVENT, type MetricsSink, type RunMetric } from "../src/metrics/metrics";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const START = 1_800_000_000_000;
+
+describe("metrics to the platform's log (task 1.9.3, owner's decision 2026-11-24)", () => {
+  const metric: RunMetric = {
+    runId: "run-1",
+    project: "acme",
+    status: "error",
+    errorCode: "policy_denied",
+    securityEvent: true,
+    durationMs: 42,
+    toolCalls: 3,
+    failedCalls: 1,
+    recordsRead: 9,
+    retries: 0,
+    verification: "not_applicable",
+    tokens: { estimated: true, script: 10, returned: 20, keptOut: 300, estimatedSaving: 270 },
+  };
+
+  it("writes one line per run, named so it can be found, holding the metric and nothing else", async () => {
+    const lines: unknown[] = [];
+    await logMetricsSink((line) => lines.push(line)).export(metric);
+    expect(lines).toEqual([{ event: METRIC_EVENT, ...metric }]);
+  });
+
+  it("writes a line that survives being turned into JSON, which is how the log keeps it", async () => {
+    const lines: unknown[] = [];
+    await logMetricsSink((line) => lines.push(JSON.parse(JSON.stringify(line)))).export(metric);
+    expect(lines[0]).toMatchObject({ event: "execward_run", securityEvent: true, errorCode: "policy_denied", durationMs: 42 });
+  });
+
+  it("never fails a run when the log cannot be written", async () => {
+    const sink = logMetricsSink(() => {
+      throw new Error("log unavailable");
+    });
+    await expect(sink.export(metric)).resolves.toBeUndefined();
+  });
+});
 
 describe("per-run metrics (NFR: observability)", () => {
   const host = (failing: string[] = []): RunHost => ({
