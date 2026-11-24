@@ -15,10 +15,14 @@ does, the fallback beside it is what to do.
 
 Do this first, before finding out what happened.
 
-| Step | How | If that is not built yet |
+| Step | How | If you cannot sign in to the console |
 |---|---|---|
-| Throw the kill switch | Owner console, kill switch. It needs no reason and no model | Delete the Worker's deployment in the Cloudflare dashboard, or disable its route |
-| Confirm it took | Start any run. It must be refused with `code_mode_off` | Confirm the Worker no longer answers |
+| Throw the kill switch | Owner console at console.execward.com, "Stop everything now". It needs no reason and no model | From a computer signed in to the Cloudflare account, in this repository: `npm run emergency:stop -- --yes --reason "why"`. Last resort: disable the Worker in the Cloudflare dashboard |
+| Confirm it took | The console shows "STOPPED". Any run must be refused with `code_mode_off` | The command prints "STOPPED" and the version number |
+
+The emergency stop can only stop. Clearing the kill switch always needs the console,
+so getting back in comes first: a second sign-in method, or having the lost one removed
+from the Cloudflare side so another can be enrolled.
 
 The kill switch stops every project. A new run is refused at once; a script already running stops within a quarter of a second. A security exception has already paused its own
 project by the time you read about it; the kill switch is for when you do not yet know
@@ -90,10 +94,10 @@ Add an adversarial test for the way in, so the same route fails the suite from n
 ## Gaps in this runbook today
 
 - The console exists (2026-11-24), at console.execward.com: step 1 is the "Stop
-  everything now" button. **If the owner cannot sign in, there is no quick stop.** The
-  console needs the owner's mailbox and their one enrolled second factor. The slow stop
-  is to disable the Worker from the Cloudflare account. A second factor or a written
-  break-glass step is still to be decided.
+  everything now" button. If the owner cannot sign in, the quick stop is the emergency stop
+  command in step 1 (added 2026-11-24, the owner's decision). It needs control of the
+  Cloudflare account. The owner is also to enrol a second sign-in method; whether that
+  has been done is not recorded here.
 - The export tool exists (2026-11-24): `npm run audit:export` does steps 3.2 and 3.3,
   and `npm run audit:export -- --check FILE` checks a copy again. It writes to the
   owner's computer; the copy kept somewhere else is still made by hand.
