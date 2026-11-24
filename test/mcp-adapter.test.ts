@@ -129,6 +129,20 @@ describe("the MCP adapter (task 2.1.1, FR-10)", () => {
     await client.close();
   });
 
+  it("keeps the tool list the same before and after calls, and never says it may change (task 2.1.3, FR-14)", async () => {
+    const { fetch_ } = setup();
+    const client = await connect(fetch_);
+    const before = JSON.stringify((await client.listTools()).tools);
+    for (const script of [`return await search("issues");`, `return await describe("github_get_issue");`, `return 1;`]) {
+      await client.callTool({ name: "code", arguments: { script, project: "acme" } });
+      expect(JSON.stringify((await client.listTools()).tools)).toBe(before);
+    }
+    // A client told the list can change would have to re-read it, and could be shown a different one mid-session.
+    expect(client.getServerCapabilities()?.tools?.listChanged ?? false).toBe(false);
+    // And a second client, connecting later, is offered exactly the same.
+    expect(JSON.stringify((await (await connect(fetch_)).listTools()).tools)).toBe(before);
+  });
+
   it("refuses a tool it does not offer", async () => {
     const { fetch_, seen } = setup();
     const client = await connect(fetch_);

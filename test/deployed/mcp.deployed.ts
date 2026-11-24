@@ -55,6 +55,34 @@ describe("the MCP adapter on Cloudflare (task 2.1.1)", { timeout: 120_000 }, () 
     await client.close();
   });
 
+  it("keeps the tool list unchanged across a session that discovers tools through `search()` (task 2.1.3, FR-14)", async () => {
+    const client = await connect();
+    const before = JSON.stringify((await client.listTools()).tools);
+
+    // The session discovers tools: first by search, then one tool's types, then it calls what it found.
+    const found = await client.callTool({ name: "code", arguments: { script: `return await search("list issues");`, project: "eval" } });
+    expect(found.isError).toBeFalsy();
+    expect(text(found)).toContain("github_list_issues");
+    expect(JSON.stringify((await client.listTools()).tools)).toBe(before);
+
+    const described = await client.callTool({ name: "code", arguments: { script: `return await describe("github_list_issues");`, project: "eval" } });
+    expect(described.isError).toBeFalsy();
+    expect(JSON.stringify((await client.listTools()).tools)).toBe(before);
+
+    const used = await client.callTool({
+      name: "code",
+      arguments: { script: `const issues = await tools.github_list_issues({ owner: "northwind-labs", repo: "web-dashboard" });\nreturn issues.length;`, project: "eval" },
+    });
+    expect(used.isError).toBeFalsy();
+
+    // Still the one tool, word for word, and the server never said the list could change.
+    const after = (await client.listTools()).tools;
+    expect(after.map((tool) => tool.name)).toEqual(["code"]);
+    expect(JSON.stringify(after)).toBe(before);
+    expect(client.getServerCapabilities()?.tools?.listChanged ?? false).toBe(false);
+    await client.close();
+  });
+
   it("refuses a script the static check refuses, as an error result", async () => {
     const client = await connect();
     const result = await client.callTool({ name: "code", arguments: { script: `return fetch("https://example.com");`, project: "eval" } });
