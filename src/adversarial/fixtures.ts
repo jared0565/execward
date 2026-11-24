@@ -19,7 +19,12 @@ export function fakeToken(): string {
   return ["gh", "p_"].join("") + "A1b2".repeat(9);
 }
 
-const ANY_OBJECT: JsonSchema = { type: "object" };
+/**
+ * Accepts any fields, and says so. ExecWard refuses a field a schema does not
+ * declare, so a schema that only said "object" would have every call refused
+ * for its arguments, and an attack would look stopped for the wrong reason.
+ */
+const ANY_OBJECT: JsonSchema = { type: "object", additionalProperties: true };
 
 /** An ordinary read-only tool a script may call. */
 export const READ_POLICY: FixturePolicy = {
