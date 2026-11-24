@@ -21,8 +21,14 @@ Do this first, before finding out what happened.
 | Confirm it took | The console shows "STOPPED". Any run must be refused with `code_mode_off` | The command prints "STOPPED" and the version number |
 
 The emergency stop can only stop. Clearing the kill switch always needs the console,
-so getting back in comes first: a second sign-in method, or having the lost one removed
-from the Cloudflare side so another can be enrolled.
+so getting back in comes next.
+
+**If the authenticator is lost** (checked 2026-11-24): sign in to the Cloudflare
+dashboard, which uses the Cloudflare account's own login and not the console's second
+factor. Go to Zero Trust, Team & Resources, Users, select the user, and under MFA
+devices choose Delete. Then open the console: Access asks for a new authenticator to be
+enrolled. This cannot be done through Cloudflare's API alone, because the API does not
+list a device's ID.
 
 The kill switch stops every project. A new run is refused at once; a script already running stops within a quarter of a second. A security exception has already paused its own
 project by the time you read about it; the kill switch is for when you do not yet know
@@ -96,8 +102,11 @@ Add an adversarial test for the way in, so the same route fails the suite from n
 - The console exists (2026-11-24), at console.execward.com: step 1 is the "Stop
   everything now" button. If the owner cannot sign in, the quick stop is the emergency stop
   command in step 1 (added 2026-11-24, the owner's decision). It needs control of the
-  Cloudflare account. The owner is also to enrol a second sign-in method; whether that
-  has been done is not recorded here.
+  Cloudflare account. **There is one sign-in method and no second.** Access allows one
+  authenticator app per person, and the owner has no security key or biometric device.
+  The cover is the emergency stop, and the dashboard step in section 1 for getting back
+  in. A backup of the same authenticator is possible only by saving its setup key when
+  it is enrolled; that has not been done.
 - The export tool exists (2026-11-24): `npm run audit:export` does steps 3.2 and 3.3,
   and `npm run audit:export -- --check FILE` checks a copy again. It writes to the
   owner's computer; the copy kept somewhere else is still made by hand.

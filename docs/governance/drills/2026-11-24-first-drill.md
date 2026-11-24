@@ -39,8 +39,11 @@ Time from stop to clear: 55 seconds, with the owner already signed in.
    reached only through the console, which needs the owner's mailbox and their one
    enrolled second factor. A lost phone during an incident would leave no quick stop.
    The slow stop still exists: anyone who controls the Cloudflare account can disable
-   the Worker. **Decided by the owner the same day: both.** The owner will enrol a
-   second sign-in method, and an emergency stop command was built
+   the Worker. **Decided by the owner the same day: both.** A second sign-in method
+   turned out not to be possible: Access allows one authenticator app per person, and
+   the owner has no security key or biometric device. Getting back in after a lost
+   phone is therefore a step in the Cloudflare dashboard, now written in the runbook.
+   An emergency stop command was built
    (`npm run emergency:stop`). It was run against the test database, not production:
    it set the kill switch, wrote an audit log entry on the chain with its reason intact,
    and did nothing when run a second time. It can only stop; clearing still needs the
