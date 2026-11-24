@@ -42,6 +42,13 @@
 			"bucket_name": "execward-backups"
 		}
 	],
+	// Sends the link-only emails (task 1.6.7). It may send from this one address only.
+	"send_email": [
+		{
+			"name": "EMAIL",
+			"allowed_sender_addresses": ["alerts@notify.execward.com"]
+		}
+	],
 	// The owner console's address. Cloudflare Access guards the whole hostname, and the
 	// Worker refuses any console request Access did not authenticate (src/console/access.ts).
 	"routes": [

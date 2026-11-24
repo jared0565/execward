@@ -14,6 +14,7 @@ import { principalFromAccess, type AccessContext } from "./console/access";
 import { ownerConsole } from "./console/console";
 import { escalationQueue } from "./console/escalations";
 import { CONSOLE_PATH, consoleResponse } from "./console/http";
+import { bindingMailer } from "./console/mailer";
 import { CONTRACT_VERSION } from "./contracts/version";
 import { EXECWARD_VERSION } from "./index";
 import { d1ControlStore, d1EscalationStore, type StateDatabase } from "./storage/d1-stores";
@@ -43,7 +44,8 @@ export async function handle(request: Request, env: Env, access: AccessContext |
   const audit = auditLog(d1AuditStore(db), now);
   const console_ = ownerConsole({ control, audit, now });
   const queue = escalationQueue({ store: d1EscalationStore(db), control, audit, now, newId: () => crypto.randomUUID() });
-  return (await consoleResponse(request, { console: console_, queue, principal, nonce })) ?? handleRequest(request);
+  const mailer = bindingMailer(env.EMAIL, env.OWNER_EMAIL);
+  return (await consoleResponse(request, { console: console_, queue, ...(mailer === undefined ? {} : { mailer }), principal, nonce })) ?? handleRequest(request);
 }
 
 export default {

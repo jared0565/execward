@@ -89,6 +89,7 @@ $("onboard").onclick = () => act({ action: "complete_onboarding", profile: $("pr
 $("pause").onclick = () => act({ action: "pause_project", project: val("project"), reason: val("projectReason") }, "Project paused.");
 $("resume").onclick = () => act({ action: "resume_project", project: val("project"), reason: val("projectReason") }, "Project resumed.");
 $("block").onclick = () => act({ action: "block_tool", tool: val("tool"), reason: val("toolReason") }, "Tool blocked.");
+$("testEmail").onclick = () => act({ action: "test_email" }, "Test email sent. Check your inbox, and your spam folder.");
 $("unblock").onclick = () => act({ action: "unblock_tool", tool: val("tool"), reason: val("toolReason") }, "Tool unblocked.");
 load();
 `;
@@ -156,6 +157,12 @@ export function consolePage(nonce: string): string {
 <label>Reason <input id="toolReason" maxlength="200" size="30"></label><br>
 <button id="block">Block</button>
 <button id="unblock">Unblock</button>
+</section>
+
+<section>
+<h2>Email</h2>
+<p>Urgent items are emailed to you at once, and the rest once a day. An email only ever says that something is waiting, with a link to this console.</p>
+<button id="testEmail">Send me a test email</button>
 </section>
 
 <p class="muted">Every change is numbered and written to the audit log. Current number: <span id="version">-</span>.</p>

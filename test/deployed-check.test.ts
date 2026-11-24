@@ -9,6 +9,7 @@ function live(): DeployedVersion {
       { type: "r2_bucket", name: "BACKUPS", bucket_name: "execward-backups" },
       { type: "d1", name: "DB", id: "33b54ace-0649-4949-abe5-dacd833dfe10", database_id: "33b54ace-0649-4949-abe5-dacd833dfe10" },
       { type: "worker_loader", name: "LOADER" },
+      { type: "send_email", name: "EMAIL" },
     ],
     compatibilityDate: COMPATIBILITY_DATE,
     secrets: [],
@@ -41,7 +42,7 @@ describe("the deployed Worker against the allowlist (task 1.1.6, FR-24)", () => 
   });
 
   it("reports a missing binding, a secret and a changed compatibility date", () => {
-    expect(deployedProblems({ ...live(), bindings: live().bindings.slice(0, 2) })).toEqual(['the binding "LOADER" should be deployed once, found 0']);
+    expect(deployedProblems({ ...live(), bindings: live().bindings.filter((binding) => binding.name !== "LOADER") })).toEqual(['the binding "LOADER" should be deployed once, found 0']);
     expect(deployedProblems({ ...live(), secrets: ["GITHUB_TOKEN"] })).toEqual(['the deployed Worker holds a secret named "GITHUB_TOKEN" that is not on the allowlist']);
     expect(deployedProblems({ ...live(), compatibilityDate: "2027-01-01" })).toEqual([`the deployed compatibility date is "2027-01-01", not ${COMPATIBILITY_DATE}`]);
   });

@@ -22,6 +22,7 @@ function good(): Record<string, unknown> {
     worker_loaders: [{ binding: "LOADER" }],
     d1_databases: [{ binding: "DB", database_name: "execward", database_id: "33b54ace-0649-4949-abe5-dacd833dfe10", migrations_dir: "migrations" }],
     r2_buckets: [{ binding: "BACKUPS", bucket_name: "execward-backups" }],
+    send_email: [{ name: "EMAIL", allowed_sender_addresses: ["alerts@notify.execward.com"] }],
     routes: [{ pattern: "console.execward.com", custom_domain: true }],
     triggers: { crons: ["*/5 * * * *"] },
   };
@@ -70,6 +71,17 @@ describe("workerConfigProblems", () => {
     const problems = workerConfigProblems({ ...good(), routes }, TODAY);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('"routes" must be exactly');
+  });
+
+  it.each([
+    ["with no limit on who it sends as", [{ name: "EMAIL" }]],
+    ["allowed to send as another address", [{ name: "EMAIL", allowed_sender_addresses: ["alerts@notify.execward.com", "admin@execward.com"] }]],
+    ["allowed to send as the main domain", [{ name: "EMAIL", allowed_sender_addresses: ["alerts@execward.com"] }]],
+    ["under another name", [{ name: "MAIL", allowed_sender_addresses: ["alerts@notify.execward.com"] }]],
+    ["declared twice", [{ name: "EMAIL", allowed_sender_addresses: ["alerts@notify.execward.com"] }, { name: "EMAIL", allowed_sender_addresses: ["alerts@notify.execward.com"] }]],
+    ["missing", []],
+  ])("refuses an email binding %s", (_label, send_email) => {
+    expect(workerConfigProblems({ ...good(), send_email }, TODAY).length).toBeGreaterThan(0);
   });
 
   it("refuses a workers.dev address, which Access on the console's hostname would not guard", () => {
@@ -145,8 +157,8 @@ describe("this repository's Worker (task 1.1.1)", () => {
     expect(workerConfigProblems(config)).toEqual([]);
   });
 
-  it("has exactly three bindings: the Worker Loader, its own database and the backup bucket", () => {
-    expect(ALLOWED_BINDINGS.map((entry) => `${entry.section}:${entry.binding}`)).toEqual(["worker_loaders:LOADER", "d1_databases:DB", "r2_buckets:BACKUPS"]);
+  it("has exactly four bindings: the Worker Loader, its own database, the backup bucket and the email sender", () => {
+    expect(ALLOWED_BINDINGS.map((entry) => `${entry.section}:${entry.binding}`)).toEqual(["worker_loaders:LOADER", "d1_databases:DB", "r2_buckets:BACKUPS", "send_email:EMAIL"]);
   });
 
   it("builds the Worker in CI, so a broken configuration cannot merge", () => {
