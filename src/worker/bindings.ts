@@ -16,7 +16,7 @@ export interface AllowedBinding {
   readonly section: string;
   readonly binding: string;
   /** The other settings the entry must have, each with exactly this value. None when absent. */
-  readonly settings?: Readonly<Record<string, string>>;
+  readonly settings?: Readonly<Record<string, string | readonly string[]>>;
 }
 
 /**
@@ -35,7 +35,15 @@ export const ALLOWED_BINDINGS: readonly AllowedBinding[] = [
   },
   /** Where the daily backup of that database is written (task 1.4.5, added 2026-11-23). */
   { section: "r2_buckets", binding: "BACKUPS", settings: { bucket_name: "execward-backups" } },
+  /**
+   * Sends the link-only emails (task 1.6.7, added 2026-11-24). It may send from one address only.
+   * Who it sends to is the owner's address, a secret, fixed in code (src/console/mailer.ts).
+   */
+  { section: "send_email", binding: "EMAIL", settings: { allowed_sender_addresses: ["alerts@notify.execward.com"] } },
 ];
+
+/** The key that holds a binding's name in its config entry, where it is not "binding". */
+export const BINDING_NAME_KEY: Readonly<Record<string, string>> = { send_email: "name" };
 
 /**
  * The one timer the Worker runs on: every five minutes (src/worker/scheduled.ts).
@@ -85,6 +93,7 @@ export interface Env {
   readonly LOADER: unknown;
   readonly DB: unknown;
   readonly BACKUPS: unknown;
+  readonly EMAIL?: unknown;
   readonly ACCESS_AUD?: string;
   readonly OWNER_EMAIL?: string;
 }

@@ -10,6 +10,7 @@ import {
   ALLOWED_BINDINGS,
   ALLOWED_COMPATIBILITY_FLAGS,
   ALLOWED_ROUTES,
+  BINDING_NAME_KEY,
   ALLOWED_SETTINGS,
   ALLOWED_TRIGGERS,
   COMPATIBILITY_DATE,
@@ -117,14 +118,19 @@ export function workerConfigProblems(config: unknown, today: Date = new Date()):
       continue;
     }
     const names: string[] = [];
-    for (const item of declared) {
-      if (!isRecord(item) || typeof item.binding !== "string") {
+    const nameKey = BINDING_NAME_KEY[section] ?? "binding";
+    for (const entry of declared) {
+      const name = isRecord(entry) ? entry[nameKey] : undefined;
+      if (!isRecord(entry) || typeof name !== "string") {
         problems.push(`"${section}" has an entry with no binding name`);
         continue;
       }
-      names.push(item.binding);
-      if (!allowed.includes(item.binding)) {
-        problems.push(`binding "${item.binding}" in "${section}" is not on the allowlist`);
+      // From here on the entry is read under one key, whichever the section uses.
+      const item: Record<string, unknown> = { ...entry, binding: name };
+      if (nameKey !== "binding") delete item[nameKey];
+      names.push(name);
+      if (!allowed.includes(name)) {
+        problems.push(`binding "${name}" in "${section}" is not on the allowlist`);
       }
       // The entry may carry only the settings the allowlist names, each with the value it names:
       // a binding of the right name pointed at another database is not the allowed binding.
@@ -134,7 +140,7 @@ export function workerConfigProblems(config: unknown, today: Date = new Date()):
         problems.push(`binding "${item.binding}" in "${section}" has settings that are not on the allowlist: ${extra.join(", ")}`);
       }
       for (const [key, expected] of Object.entries(settings)) {
-        if (item[key] !== expected) problems.push(`binding "${item.binding}" in "${section}" must have "${key}" set to ${JSON.stringify(expected)}`);
+        if (JSON.stringify(item[key]) !== JSON.stringify(expected)) problems.push(`binding "${item.binding}" in "${section}" must have "${key}" set to ${JSON.stringify(expected)}`);
       }
     }
     for (const binding of allowed) {

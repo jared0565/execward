@@ -16,12 +16,20 @@
 import { auditLog, d1AuditStore, type AuditDatabase } from "../audit/log";
 import { backUp, backupKey, type BackupBucket, type BackupDatabase, type BackupResult } from "../backup";
 import { escalationQueue } from "../console/escalations";
+import { bindingMailer, CONSOLE_URL } from "../console/mailer";
+import { notifier } from "../console/notify";
 import { runMaintenance, type JobResult } from "../maintenance";
 import { d1ControlStore, d1EscalationStore, sweepQuotaCounters, type StateDatabase } from "../storage/d1-stores";
+
+/** How often the timer fires. Must match the schedule in wrangler.jsonc. */
+export const SCHEDULE_MS = 5 * 60 * 1000;
 
 export interface ScheduledEnv {
   readonly DB: unknown;
   readonly BACKUPS: BackupBucket;
+  /** The email binding and the owner's address. Without both, nothing is sent and the jobs are skipped. */
+  readonly EMAIL?: unknown;
+  readonly OWNER_EMAIL?: string;
 }
 
 export interface ScheduledResult {
@@ -37,7 +45,15 @@ export async function runScheduled(env: ScheduledEnv, now: number, newId: () => 
   const log = auditLog(audit, () => now);
   const escalations = d1EscalationStore(db);
   const queue = escalationQueue({ store: escalations, control: d1ControlStore(db), audit: log, now: () => now, newId });
-  const deps = { audit, queue, escalations, sweepCounters: (at: number) => sweepQuotaCounters(db, at), now: () => now };
+  const mailer = bindingMailer(env.EMAIL, env.OWNER_EMAIL);
+  const deps = {
+    audit,
+    queue,
+    escalations,
+    ...(mailer === undefined ? {} : { notifier: notifier({ mailer, baseUrl: CONSOLE_URL, tickMs: SCHEDULE_MS }) }),
+    sweepCounters: (at: number) => sweepQuotaCounters(db, at),
+    now: () => now,
+  };
 
   const frequent = await runMaintenance(deps, "frequent");
   let result: ScheduledResult = { frequent };

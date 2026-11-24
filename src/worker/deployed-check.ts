@@ -28,6 +28,7 @@ const PLATFORM: Readonly<Record<string, { readonly type: string; readonly target
   worker_loaders: { type: "worker_loader" },
   d1_databases: { type: "d1", target: { platform: "database_id", config: "database_id" } },
   r2_buckets: { type: "r2_bucket", target: { platform: "bucket_name", config: "bucket_name" } },
+  send_email: { type: "send_email" },
 };
 
 /** Problems, in plain words. Empty means the deployed Worker reaches what the allowlist names and nothing else. */

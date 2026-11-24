@@ -22,28 +22,31 @@ export interface Mailer {
 export const URGENT_SUBJECT = "ExecWard: an item needs your review now";
 export const DIGEST_SUBJECT = "ExecWard: items are waiting for your review";
 
-/** The ID in a link must be random letters and digits, so the link itself carries no data. */
-const SAFE_ID = /^[A-Za-z0-9_-]{16,64}$/;
-
 function consoleUrl(baseUrl: string, path: string): string {
   const url = new URL(path, baseUrl);
   if (url.protocol !== "https:") throw new Error("the console link must use https");
   return url.toString();
 }
 
-export function urgentEmail(item: Pick<EscalationItem, "id">, baseUrl: string): Email {
-  if (!SAFE_ID.test(item.id)) throw new Error("the item's ID is not safe to put in a link");
-  return { subject: URGENT_SUBJECT, body: `Something in ExecWard needs your review now. Sign in to see it:\n\n${consoleUrl(baseUrl, `/escalations/${item.id}`)}\n` };
+/** The link leads to the console and carries nothing about the item, not even its ID (changed 2026-11-24). */
+export function urgentEmail(baseUrl: string): Email {
+  return { subject: URGENT_SUBJECT, body: `Something in ExecWard needs your review now. Sign in to see it:\n\n${consoleUrl(baseUrl, "/console")}\n` };
 }
 
 export function digestEmail(baseUrl: string): Email {
-  return { subject: DIGEST_SUBJECT, body: `There are items waiting for your review in ExecWard. Sign in to see them:\n\n${consoleUrl(baseUrl, "/escalations")}\n` };
+  return { subject: DIGEST_SUBJECT, body: `There are items waiting for your review in ExecWard. Sign in to see them:\n\n${consoleUrl(baseUrl, "/console")}\n` };
 }
 
 export interface NotifierDeps {
   readonly mailer: Mailer;
   /** Where the console is served, for example `https://console.example.com`. */
   readonly baseUrl: string;
+  /**
+   * How often `remind` is run. When set, a reminder is decided from the clock alone: it is due on
+   * the run in which the item's age passes a whole number of reminder periods. A Worker on a timer
+   * keeps no memory between runs, and without this it would send again on every run.
+   */
+  readonly tickMs?: number;
 }
 
 export interface Notifier {
@@ -59,12 +62,12 @@ export interface Notifier {
 }
 
 export function notifier(deps: NotifierDeps): Notifier {
-  // When each item was last written about. Held in memory: after a restart a reminder may come early.
+  // When each item was last written about. Held in memory, so used only when no `tickMs` is given.
   const lastSent = new Map<string, number>();
   return {
     async raised(item) {
       if (!item.urgent) return;
-      await deps.mailer.send(urgentEmail(item, deps.baseUrl));
+      await deps.mailer.send(urgentEmail(deps.baseUrl));
       lastSent.set(item.id, item.createdAt);
     },
     async remind(open, now) {
@@ -73,8 +76,13 @@ export function notifier(deps: NotifierDeps): Notifier {
         const every = ESCALATION_MENU[item.trigger].reminderEveryMs;
         // Only urgent items are reminded one by one; the rest are in the daily digest already.
         if (item.status !== "open" || !item.urgent || every === null) continue;
-        if (now - (lastSent.get(item.id) ?? item.createdAt) < every) continue;
-        await deps.mailer.send(urgentEmail(item, deps.baseUrl));
+        const age = now - item.createdAt;
+        const due =
+          deps.tickMs === undefined
+            ? now - (lastSent.get(item.id) ?? item.createdAt) >= every
+            : age >= every && Math.floor(age / every) !== Math.floor((age - deps.tickMs) / every);
+        if (!due) continue;
+        await deps.mailer.send(urgentEmail(deps.baseUrl));
         lastSent.set(item.id, now);
         sent += 1;
       }

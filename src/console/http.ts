@@ -10,6 +10,8 @@
 import { ConsoleAccessError, ConsoleChangeError, type OwnerConsole, type Principal } from "./console";
 import type { ControlState } from "./control";
 import type { EscalationItem, EscalationQueue } from "./escalations";
+import { TEST_EMAIL } from "./mailer";
+import type { Mailer } from "./notify";
 import { consolePage } from "./page";
 
 export const CONSOLE_PATH = "/console";
@@ -59,6 +61,8 @@ export interface ConsoleHttpDeps {
   readonly console: OwnerConsole;
   /** The escalation queue (tasks 1.6.6, 1.6.9). Without it the console has no queue address. */
   readonly queue?: EscalationQueue;
+  /** Sends the link-only emails (task 1.6.7). Absent when email is not set up. */
+  readonly mailer?: Mailer;
   readonly principal: Principal;
   /** A fresh random value per response, for the page's one script and one style block. */
   readonly nonce: () => string;
@@ -175,6 +179,15 @@ export async function consoleResponse(request: Request, deps: ConsoleHttpDeps): 
         // The owner's choice on a queue item. The queue checks the principal again and applies the choice.
         const resolved = await deps.queue.resolve(deps.principal, field(sent, "id"), field(sent, "option"), field(sent, "reason", { required: false }) || undefined);
         return json({ state: await deps.console.state(deps.principal), resolved: { id: resolved.id, status: resolved.status } });
+      }
+      if (sent.action === "test_email") {
+        if (deps.mailer === undefined) return json({ error: "not_changed", message: "email is not set up" }, 409);
+        try {
+          await deps.mailer.send(TEST_EMAIL);
+        } catch {
+          return json({ error: "not_sent", message: "the email could not be sent" }, 502);
+        }
+        return json({ state: await deps.console.state(deps.principal), sent: true });
       }
       return json({ state: await act(deps.console, deps.principal, sent) });
     }

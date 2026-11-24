@@ -290,18 +290,18 @@ describe("emails carry a link and nothing else (FR-49, flag 11)", () => {
   };
 
   it("builds a body that is fixed text plus one link", () => {
-    expect(urgentEmail(SECRET_ITEM, "https://console.example.com")).toEqual({
+    expect(urgentEmail("https://console.example.com")).toEqual({
       subject: URGENT_SUBJECT,
-      body: "Something in ExecWard needs your review now. Sign in to see it:\n\nhttps://console.example.com/escalations/k3Jx9QpLm2Zt7VbN4wRs\n",
+      body: "Something in ExecWard needs your review now. Sign in to see it:\n\nhttps://console.example.com/console\n",
     });
     expect(digestEmail("https://console.example.com")).toEqual({
       subject: DIGEST_SUBJECT,
-      body: "There are items waiting for your review in ExecWard. Sign in to see them:\n\nhttps://console.example.com/escalations\n",
+      body: "There are items waiting for your review in ExecWard. Sign in to see them:\n\nhttps://console.example.com/console\n",
     });
   });
 
   it("scans each email for data from the item, and finds none", () => {
-    const emails = [urgentEmail(SECRET_ITEM, "https://console.example.com"), digestEmail("https://console.example.com")];
+    const emails = [urgentEmail("https://console.example.com"), digestEmail("https://console.example.com")];
     const forbidden = ["acme", "payroll", "run-4417", "policy_denied", "sensitive", "github", "salary", "9000", "security", "paused", "keep_paused", "false positive"];
     for (const email of emails) {
       const text = `${email.subject}\n${email.body}`.toLowerCase();
@@ -312,11 +312,16 @@ describe("emails carry a link and nothing else (FR-49, flag 11)", () => {
     }
   });
 
-  it("refuses to build a link from an ID that could carry data, or to a page that is not https", () => {
-    expect(() => urgentEmail({ id: "acme payroll run 4417" }, "https://console.example.com")).toThrow("not safe to put in a link");
-    expect(() => urgentEmail({ id: "../../admin?x=1" }, "https://console.example.com")).toThrow("not safe to put in a link");
-    expect(() => urgentEmail({ id: "short" }, "https://console.example.com")).toThrow("not safe to put in a link");
-    expect(() => urgentEmail(SECRET_ITEM, "http://console.example.com")).toThrow("must use https");
+  it("puts nothing about the item in the link, not even its ID, and refuses a page that is not https", async () => {
+    // Sent through the notifier, with the item that holds everything an email must not.
+    const viaNotifier: Email[] = [];
+    await notifier({ mailer: { send: async (email) => void viaNotifier.push(email) }, baseUrl: "https://console.example.com" }).raised(SECRET_ITEM);
+    expect(viaNotifier).toHaveLength(1);
+    for (const value of [SECRET_ITEM.id, SECRET_ITEM.project, SECRET_ITEM.trigger]) expect(viaNotifier[0]?.body).not.toContain(value);
+    // The link is the same whatever the item is, so an ID that carried data could not reach an email.
+    expect(urgentEmail("https://console.example.com").body).toBe("Something in ExecWard needs your review now. Sign in to see it:\n\nhttps://console.example.com/console\n");
+    expect(() => urgentEmail("http://console.example.com")).toThrow("must use https");
+    expect(() => digestEmail("http://console.example.com")).toThrow("must use https");
   });
 
   it("sends an urgent item at once and on its own, and leaves the rest for the digest", async () => {
@@ -326,7 +331,9 @@ describe("emails carry a link and nothing else (FR-49, flag 11)", () => {
     expect(sent).toEqual([]);
     const security = await queue.raise({ trigger: "security_exception", project: "work", runId: "run-3" });
     expect(sent.map((email) => email.subject)).toEqual([URGENT_SUBJECT]);
-    expect(sent[0]?.body).toContain(`/escalations/${security.id}`);
+    expect(sent[0]?.body).toContain("/console");
+    // The link carries nothing about the item, not even its ID.
+    expect(sent[0]?.body).not.toContain(security.id);
     expect(await notify.digest(await queue.list(owner()))).toBe(true);
     expect(sent.map((email) => email.subject)).toEqual([URGENT_SUBJECT, DIGEST_SUBJECT]);
   });

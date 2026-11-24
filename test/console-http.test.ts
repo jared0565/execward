@@ -5,6 +5,8 @@ import { ownerConsole, TWO_FACTOR_MAX_AGE_MS, type Principal } from "../src/cons
 import { memoryControlStore, type ControlState } from "../src/console/control";
 import { escalationQueue, memoryEscalationStore } from "../src/console/escalations";
 import { CONSOLE_HEADER, consoleResponse } from "../src/console/http";
+import { ALERT_SENDER, bindingMailer, CONSOLE_URL, TEST_EMAIL } from "../src/console/mailer";
+import { notifier, type Email } from "../src/console/notify";
 import { consolePage } from "../src/console/page";
 import { handle } from "../src/worker";
 import { ALLOWED_SECRETS } from "../src/worker/bindings";
@@ -307,6 +309,105 @@ describe("the escalation queue in the console (tasks 1.6.6, 1.6.9)", () => {
     expect(page).toContain("Waiting for you");
     expect(page).toContain("textContent");
     expect(page).not.toMatch(/innerHTML|insertAdjacentHTML/);
+  });
+});
+
+describe("sending email (task 1.6.7)", () => {
+  const HOUR = 60 * 60 * 1000;
+
+  it("hands an email to the binding from the one sender to the one recipient, as plain text", async () => {
+    const sent: unknown[] = [];
+    const mailer = bindingMailer({ send: async (message: unknown) => void sent.push(message) }, "  owner@example.test ");
+    await mailer?.send({ subject: "S", body: "B" });
+    expect(sent).toEqual([{ from: ALERT_SENDER, to: "owner@example.test", subject: "S", text: "B" }]);
+    expect(ALERT_SENDER).toBe("alerts@notify.execward.com");
+  });
+
+  it.each<[string, unknown, string | undefined]>([
+    ["no binding", undefined, "owner@example.test"],
+    ["a binding that cannot send", {}, "owner@example.test"],
+    ["no recipient", { send: async () => undefined }, undefined],
+    ["a blank recipient", { send: async () => undefined }, "  "],
+    ["two recipients", { send: async () => undefined }, "a@example.test, b@example.test"],
+    ["a recipient with a header smuggled in", { send: async () => undefined }, "a@example.test\nBcc: b@example.test"],
+    ["a recipient with a display name", { send: async () => undefined }, "Owner <a@example.test>"],
+    ["something that is not an address", { send: async () => undefined }, "owner"],
+  ])("is not set up with %s", (_label, binding, to) => {
+    expect(bindingMailer(binding, to)).toBeUndefined();
+  });
+
+  it("sends a test email that says nothing and links only to the console", () => {
+    expect(TEST_EMAIL.body).toContain(`${CONSOLE_URL}/console`);
+    expect([...TEST_EMAIL.body.matchAll(/https?:\/\/[^\s]+/g)].map((match) => match[0])).toEqual(["https://console.execward.com/console"]);
+  });
+
+  it("lets the signed-in owner send it from the console, and nobody else", async () => {
+    const sent: Email[] = [];
+    const mailer = { send: async (email: Email) => void sent.push(email) };
+    const make = (principal: Principal) => {
+      const control = memoryControlStore();
+      const console_ = ownerConsole({ control, audit: auditLog(memoryAuditStore(), () => NOW), now: () => NOW });
+      return consoleResponse(
+        new Request("https://console.example.test/console/action", {
+          method: "POST",
+          headers: { origin: "https://console.example.test", "content-type": "application/json", [CONSOLE_HEADER]: "1" },
+          body: JSON.stringify({ action: "test_email" }),
+        }),
+        { console: console_, mailer, principal, nonce: () => "n" },
+      );
+    };
+    expect(((await make({ kind: "anonymous" })) as Response).status).toBe(403);
+    expect(((await make({ kind: "model_client", id: "mcp" })) as Response).status).toBe(403);
+    expect(sent).toEqual([]);
+    expect(((await make({ kind: "owner", id: "o", twoFactorAt: NOW - 1000 })) as Response).status).toBe(200);
+    expect(sent).toEqual([TEST_EMAIL]);
+  });
+
+  it("says so when email is not set up, and when a send fails, without the reason", async () => {
+    const { post } = setup();
+    const none = (await post({ action: "test_email" })) as Response;
+    expect(none.status).toBe(409);
+    const control = memoryControlStore();
+    const console_ = ownerConsole({ control, audit: auditLog(memoryAuditStore(), () => NOW), now: () => NOW });
+    const failing = {
+      send: async () => {
+        throw new Error("550 mailbox owner@example.test rejected by mx.example.test");
+      },
+    };
+    const response = (await consoleResponse(
+      new Request("https://console.example.test/console/action", {
+        method: "POST",
+        headers: { origin: "https://console.example.test", "content-type": "application/json", [CONSOLE_HEADER]: "1" },
+        body: JSON.stringify({ action: "test_email" }),
+      }),
+      { console: console_, mailer: failing, principal: { kind: "owner", id: "o", twoFactorAt: NOW - 1000 }, nonce: () => "n" },
+    )) as Response;
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toMatch(/550|mailbox|example\.test/);
+  });
+
+  it("reminds about an urgent item once an hour on a timer that remembers nothing", async () => {
+    const { queue } = setup();
+    const item = await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1" });
+    const TICK = 5 * 60 * 1000;
+    let sent = 0;
+    // A new notifier every run, as on a Worker: nothing is carried from one run to the next.
+    for (let now = item.createdAt; now <= item.createdAt + 3 * HOUR + TICK; now += TICK) {
+      const fresh = notifier({ mailer: { send: async () => void (sent += 1) }, baseUrl: CONSOLE_URL, tickMs: TICK });
+      await fresh.remind([item], now);
+    }
+    expect(sent).toBe(3);
+  });
+
+  it("does not remind before the first hour is up, or about an item that is not urgent", async () => {
+    const { queue } = setup();
+    const urgent = await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1" });
+    const calm = await queue.raise({ trigger: "definition_changed", project: "acme", runId: "run-2", context: { toolPath: "github.list_issues" } });
+    let sent = 0;
+    const fresh = () => notifier({ mailer: { send: async () => void (sent += 1) }, baseUrl: CONSOLE_URL, tickMs: 5 * 60 * 1000 });
+    await fresh().remind([urgent, calm], urgent.createdAt + 55 * 60 * 1000);
+    await fresh().remind([calm], calm.createdAt + 24 * HOUR);
+    expect(sent).toBe(0);
   });
 });
 
