@@ -65,6 +65,7 @@ export const runReportSchema = z.strictObject({
       items: z.array(z.string()),
     })
     .optional(),
+  /** Time waiting on calls. It leaves out most of the time a script spends computing. */
   durationMs: z.number().nonnegative(),
 });
 

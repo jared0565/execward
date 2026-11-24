@@ -300,6 +300,9 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     sideEffects: [],
     ...(criteria ? { criteria } : {}),
     verification,
+    // On Cloudflare the clock stands still while a script computes, so this is the time spent
+    // waiting on calls and is too low for a script that mostly computes. It decides nothing.
+    // Measured 2026-11-24: docs/decisions/2.1.8-live-checks.md.
     durationMs: Math.max(0, deps.now() - started),
   });
   const journal: CallRecord[] = [];
