@@ -19,7 +19,9 @@ import { bindingMailer } from "./console/mailer";
 import { CONTRACT_VERSION } from "./contracts/version";
 import { EXECWARD_VERSION } from "./index";
 import { MCP_PATH } from "./mcp/adapter";
-import { MCP_HOST, mcpResponse } from "./mcp/production";
+import { githubWriteCheck } from "./connectors/github-write-check";
+import { githubTokenFor, MCP_HOST, mcpResponse } from "./mcp/production";
+import { outboundFetch } from "./net/outbound";
 import { d1ControlStore, d1EscalationStore, type StateDatabase } from "./storage/d1-stores";
 import type { Env } from "./worker/bindings";
 import { runScheduled, type ScheduledEnv } from "./worker/scheduled";
@@ -53,7 +55,13 @@ export async function handle(request: Request, env: Env, access: AccessContext |
   const console_ = ownerConsole({ control, audit, now });
   const queue = escalationQueue({ store: d1EscalationStore(db), control, audit, now, newId: () => crypto.randomUUID() });
   const mailer = bindingMailer(env.EMAIL, env.OWNER_EMAIL);
-  return (await consoleResponse(request, { console: console_, queue, ...(mailer === undefined ? {} : { mailer }), principal, nonce })) ?? handleRequest(request);
+  // The owner's check that the GitHub credential cannot write. The answer goes in the audit log whatever it is.
+  const writeCheck = async (owner: string, repo: string) => {
+    const result = await githubWriteCheck({ token: githubTokenFor(env), fetch: outboundFetch() }, owner, repo);
+    await audit.record({ kind: "console_change", runId: "none", project: "-", body: { action: "github_write_check", by: principal.kind === "owner" ? principal.id : principal.kind, repository: `${owner}/${repo}`, ...result } });
+    return result;
+  };
+  return (await consoleResponse(request, { console: console_, queue, ...(mailer === undefined ? {} : { mailer }), githubWriteCheck: writeCheck, principal, nonce })) ?? handleRequest(request);
 }
 
 export default {

@@ -91,6 +91,14 @@ $("resume").onclick = () => act({ action: "resume_project", project: val("projec
 $("block").onclick = () => act({ action: "block_tool", tool: val("tool"), reason: val("toolReason") }, "Tool blocked.");
 $("testEmail").onclick = () => act({ action: "test_email" }, "Test email sent. Check your inbox, and your spam folder.");
 $("unblock").onclick = () => act({ action: "unblock_tool", tool: val("tool"), reason: val("toolReason") }, "Tool unblocked.");
+$("writeCheck").onclick = async () => {
+  say("Working...");
+  try {
+    const response = await fetch("/console/action", { method: "POST", headers: { "content-type": "application/json", "x-execward-console": "1" }, body: JSON.stringify({ action: "github_write_check", repository: val("writeRepo") }) });
+    const body = await response.json().catch(() => ({}));
+    say(body.message || "The check could not be run.", !(response.ok && body.writeCheck && body.writeCheck.outcome === "refused"));
+  } catch { say("The console could not be reached.", true); }
+};
 load();
 `;
 
@@ -163,6 +171,13 @@ export function consolePage(nonce: string): string {
 <h2>Email</h2>
 <p>Urgent items are emailed to you at once, and the rest once a day. An email only ever says that something is waiting, with a link to this console.</p>
 <button id="testEmail">Send me a test email</button>
+</section>
+
+<section>
+<h2>GitHub</h2>
+<p>ExecWard may only read from GitHub. This tries one harmless write, which GitHub should refuse, and records the answer in the audit log.</p>
+<input id="writeRepo" placeholder="owner/repository" autocomplete="off">
+<button id="writeCheck">Check that GitHub refuses a write</button>
 </section>
 
 <p class="muted">Every change is numbered and written to the audit log. Current number: <span id="version">-</span>.</p>
