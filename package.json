@@ -18,7 +18,8 @@
     "deploy:test-worker": "wrangler deploy -c test/workers/wrangler.deployed.jsonc",
     "test:deployed": "vitest run --config vitest.deployed.config.ts",
     "measure:latency": "tsx scripts/measure-latency.ts",
-    "check:deployed": "tsx scripts/check-deployed.ts"
+    "check:deployed": "tsx scripts/check-deployed.ts",
+    "audit:export": "tsx scripts/export-audit.ts"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "1.12.0",
