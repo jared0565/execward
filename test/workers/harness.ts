@@ -15,6 +15,7 @@ import { BACKUP_TABLES, backUp, restore, type BackupBucket, type BackupDatabase 
 import { brokerHost } from "../../src/broker/broker";
 import { d1PolicyStore, memoryPolicyStore, putPolicyRecord, type D1Like } from "../../src/broker/policy-store";
 import { githubPinsAndPolicy, githubUpstream } from "../../src/connectors/github";
+import { appJwt } from "../../src/connectors/github-app";
 import { outboundFetch } from "../../src/net/outbound";
 import { approve, registry, type Pin } from "../../src/registry/registry";
 import { githubFixtureBackend } from "../../src/eval/fixtures/github-backend";
@@ -350,6 +351,17 @@ export default {
         now: () => Date.now(),
       });
       return Response.json({ output });
+    }
+    if (route === "/github-app") {
+      // Task 1.1.2: the GitHub App's signed statement, made in this runtime from a key the test
+      // made for the purpose. Nothing is sent to GitHub.
+      const body = (await request.json()) as { appId?: unknown; privateKeyPem?: unknown };
+      try {
+        if (typeof body.appId !== "string" || typeof body.privateKeyPem !== "string") throw new Error("missing");
+        return Response.json({ jwt: await appJwt(body.appId, body.privateKeyPem, Date.now()) });
+      } catch {
+        return Response.json({ error: "not usable" }, { status: 400 });
+      }
     }
     if (route === "/github") {
       // The GitHub connector behind the whole stack: code tool, sandbox, broker, pinned

@@ -81,9 +81,11 @@ export const ALLOWED_SETTINGS = {
 } as const;
 
 /**
- * Every secret the Worker may hold. None is a credential for anything: they say
- * who the owner is and which Access application a request came through, so that
- * everyone else can be refused (tasks 1.6.1 and 2.1.2).
+ * Every secret the Worker may hold. The first three are credentials for nothing:
+ * they say who the owner is and which Access application a request came through,
+ * so that everyone else can be refused (tasks 1.6.1 and 2.1.2). The last three
+ * are the GitHub App: its private key is the one real credential here, and it
+ * can only read the repositories the owner installed the App on (task 1.1.2).
  * A secret not named here fails the deployed check.
  */
 export const ALLOWED_SECRETS: readonly string[] = [
@@ -93,6 +95,11 @@ export const ALLOWED_SECRETS: readonly string[] = [
   "MCP_ACCESS_AUD",
   /** The owner's sign-in address. A secret so that it is in no file and no log. */
   "OWNER_EMAIL",
+  /** The GitHub App's ID and the ID of its installation. Not secret in themselves; kept out of every file. */
+  "GITHUB_APP_ID",
+  "GITHUB_APP_INSTALLATION_ID",
+  /** The GitHub App's private key. It mints read-only tokens that last about an hour. */
+  "GITHUB_APP_PRIVATE_KEY",
 ];
 
 /** The Worker's environment as the platform supplies it. Typed fully in task 1.2. */
@@ -104,4 +111,7 @@ export interface Env {
   readonly ACCESS_AUD?: string;
   readonly MCP_ACCESS_AUD?: string;
   readonly OWNER_EMAIL?: string;
+  readonly GITHUB_APP_ID?: string;
+  readonly GITHUB_APP_INSTALLATION_ID?: string;
+  readonly GITHUB_APP_PRIVATE_KEY?: string;
 }
