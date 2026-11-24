@@ -9,7 +9,6 @@
  * as defended, so the list cannot go stale quietly.
  */
 export const OPEN_UNTIL_LATER: Readonly<Record<string, { readonly task: string; readonly part: string }>> = {
-  "token-for-another-service": { task: "2.1.2", part: "remote sign-in with tokens (Phase 2)" },
   "paused-run-resumed-by-another-user": { task: "3.1.6", part: "runs that pause for approval and resume (Phase 3)" },
   "paused-run-handle-guessable": { task: "3.1.6", part: "runs that pause for approval and resume (Phase 3)" },
   "approved-call-swapped": { task: "3.1.5", part: "approvals of tier-2 actions (Phase 3)" },

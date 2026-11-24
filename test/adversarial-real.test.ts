@@ -6,7 +6,8 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { unstable_startWorker } from "wrangler";
-import { ADVERSARIAL_CASES, JUDGED_FROM_THE_BUILD, OPEN_UNTIL_LATER, runSuite } from "../src/adversarial";
+import { ADVERSARIAL_CASES, execwardTarget, JUDGED_FROM_THE_BUILD, OPEN_UNTIL_LATER, runSuite } from "../src/adversarial";
+import type { Executor } from "../src/executor";
 import { STOPPED_BY, unexpected, type ObservedResult } from "../src/adversarial/expected";
 import { buildFacts, buildTarget } from "../scripts/build-facts";
 
@@ -50,6 +51,15 @@ describe("the adversarial suite against ExecWard (FR-31, Gate 1)", () => {
       expect(row, `task ${task} for "${id}"`).toBeDefined();
       expect(row?.trimEnd().endsWith("| Done |"), `task ${task} is Done but "${id}" is still listed as open`).toBe(false);
     }
+  });
+
+  it("refuses a sign-in issued for another service, and accepts one issued for this one (FR-25)", async () => {
+    expect(results.find((result) => result.id === "token-for-another-service")?.defended).toBe(true);
+    expect(OPEN_UNTIL_LATER["token-for-another-service"]).toBeUndefined();
+    // The probe itself, both ways: it is not one that refuses everything.
+    const target = execwardTarget({ executor: undefined as unknown as Executor });
+    expect(await target.acceptsToken?.({ audience: "a".repeat(64), scopes: [] })).toBe(true);
+    expect(await target.acceptsToken?.({ audience: "https://another-service.example", scopes: ["repo:read"] })).toBe(false);
   });
 
   it("knows what stops each script attack, and only for cases that exist", () => {
