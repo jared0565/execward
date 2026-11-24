@@ -7,6 +7,7 @@
  * must come from the console's own page, and the page may load nothing from
  * anywhere else.
  */
+import { repositoryName, type WriteCheckResult } from "../connectors/github-write-check";
 import { ConsoleAccessError, ConsoleChangeError, type OwnerConsole, type Principal } from "./console";
 import type { ControlState } from "./control";
 import type { EscalationItem, EscalationQueue } from "./escalations";
@@ -63,6 +64,8 @@ export interface ConsoleHttpDeps {
   readonly queue?: EscalationQueue;
   /** Sends the link-only emails (task 1.6.7). Absent when email is not set up. */
   readonly mailer?: Mailer;
+  /** Tries one write with the GitHub credential, which GitHub must refuse (task 2.1.10). */
+  readonly githubWriteCheck?: (owner: string, repo: string) => Promise<WriteCheckResult>;
   readonly principal: Principal;
   /** A fresh random value per response, for the page's one script and one style block. */
   readonly nonce: () => string;
@@ -131,6 +134,13 @@ async function act(console_: OwnerConsole, principal: Principal, body: Record<st
   }
 }
 
+const WRITE_CHECK_MESSAGES: Record<WriteCheckResult["outcome"], string> = {
+  refused: "GitHub refused the write. The credential can only read.",
+  accepted: "WARNING: GitHub ACCEPTED the write. The credential's permissions are wrong. Fix them on GitHub now.",
+  no_credential: "There is no GitHub credential to try with.",
+  inconclusive: "No answer either way. Check that the repository is one the GitHub App is installed on.",
+};
+
 /** Why a request to change something did not come from the console's own page, or `undefined` when it did. */
 function notFromThePage(request: Request, url: URL): string | undefined {
   if (request.headers.get("origin") !== url.origin) return "the request did not come from the console";
@@ -188,6 +198,13 @@ export async function consoleResponse(request: Request, deps: ConsoleHttpDeps): 
           return json({ error: "not_sent", message: "the email could not be sent" }, 502);
         }
         return json({ state: await deps.console.state(deps.principal), sent: true });
+      }
+      if (sent.action === "github_write_check") {
+        if (deps.githubWriteCheck === undefined) return json({ error: "not_changed", message: "GitHub is not connected" }, 409);
+        const name = repositoryName(field(sent, "repository"));
+        if (name === undefined) throw new BadRequest('the repository must be written as "owner/name"');
+        const result = await deps.githubWriteCheck(name.owner, name.repo);
+        return json({ state: await deps.console.state(deps.principal), writeCheck: result, message: WRITE_CHECK_MESSAGES[result.outcome] });
       }
       return json({ state: await act(deps.console, deps.principal, sent) });
     }

@@ -55,6 +55,12 @@ export interface McpEnv {
 let githubSettings: GithubAppSettings = { appId: undefined, installationId: undefined, privateKeyPem: undefined };
 const githubToken = githubAppToken({ settings: () => githubSettings, fetch: outboundFetch(), now: () => Date.now() });
 
+/** The GitHub credential for this deployment: a token minted from the App's settings, or none. */
+export function githubTokenFor(env: McpEnv): () => Promise<string | undefined> {
+  githubSettings = { appId: env.GITHUB_APP_ID, installationId: env.GITHUB_APP_INSTALLATION_ID, privateKeyPem: env.GITHUB_APP_PRIVATE_KEY };
+  return githubToken;
+}
+
 /** Each run's token estimate, as one line in the platform's log, beside its metric line. */
 const logMeterSink: MeterSink = {
   async write(record) {
