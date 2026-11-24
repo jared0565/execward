@@ -308,7 +308,7 @@ export default {
       // The MCP adapter over the same service (task 2.1.1). The caller is whoever passed this Worker's own
       // gate; sign-in for model clients is task 2.1.2. Run `/service` with `setup` first.
       const { service } = await databaseService(env);
-      return mcpAdapter({ service }).fetch(request, { providerRoute: "anthropic_api_commercial" });
+      return mcpAdapter({ service }).serve(request, { providerRoute: "anthropic_api_commercial" });
     }
     if (route === "/adversarial") {
       // The adversarial suite against ExecWard itself, where the sandbox is real (FR-31, Gate 1).

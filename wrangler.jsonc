@@ -55,6 +55,11 @@
 		{
 			"pattern": "console.execward.com",
 			"custom_domain": true
+		},
+		// The MCP server's address, behind its own Access application (src/mcp/production.ts).
+		{
+			"pattern": "mcp.execward.com",
+			"custom_domain": true
 		}
 	],
 	// The housekeeping timer: every five minutes (src/worker/scheduled.ts).

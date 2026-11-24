@@ -112,6 +112,8 @@ describe("the code the production Worker loads (task 1.1.6, FR-24)", () => {
         .forEach((line, index) => {
           // The Worker's own request handler is named `fetch`. It receives requests; it sends none.
           if (file === "src/worker.ts" && line.trim() === "async fetch(request: Request, env: Env, ctx: { readonly access?: AccessContext }): Promise<Response> {") return;
+          // The MCP library's handler is also named `fetch`. The adapter hands it the request it was given; nothing is sent.
+          if (file === "src/mcp/adapter.ts" && line.trim() === "return await handler.fetch(request);") return;
           if (reachesTheNetwork(line)) found.push(`${file}:${index + 1}: ${line.trim().slice(0, 120)}`);
         });
     }

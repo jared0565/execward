@@ -52,11 +52,15 @@ export const BINDING_NAME_KEY: Readonly<Record<string, string>> = { send_email: 
 export const ALLOWED_TRIGGERS = { crons: ["*/5 * * * *"] } as const;
 
 /**
- * The one address the Worker answers at: the owner console, behind Cloudflare
- * Access (task 1.6.1). The configuration's "routes" must be exactly this. Another
+ * The two addresses the Worker answers at, each behind its own Cloudflare Access
+ * application: the owner console (task 1.6.1) and the MCP server for model
+ * clients (task 2.1.2). The configuration's "routes" must be exactly this. Another
  * address would be a way in that Access does not guard.
  */
-export const ALLOWED_ROUTES = [{ pattern: "console.execward.com", custom_domain: true }] as const;
+export const ALLOWED_ROUTES = [
+  { pattern: "console.execward.com", custom_domain: true },
+  { pattern: "mcp.execward.com", custom_domain: true },
+] as const;
 
 /**
  * Config keys that are not bindings and are allowed, with the value each must
@@ -77,13 +81,16 @@ export const ALLOWED_SETTINGS = {
 } as const;
 
 /**
- * Every secret the Worker may hold. Neither is a credential for anything: they say
- * who the owner is, so that the console can refuse everyone else (task 1.6.1).
+ * Every secret the Worker may hold. None is a credential for anything: they say
+ * who the owner is and which Access application a request came through, so that
+ * everyone else can be refused (tasks 1.6.1 and 2.1.2).
  * A secret not named here fails the deployed check.
  */
 export const ALLOWED_SECRETS: readonly string[] = [
   /** The audience tag of the Cloudflare Access application that guards the console. */
   "ACCESS_AUD",
+  /** The audience tag of the separate Access application that guards the MCP address. */
+  "MCP_ACCESS_AUD",
   /** The owner's sign-in address. A secret so that it is in no file and no log. */
   "OWNER_EMAIL",
 ];
@@ -95,5 +102,6 @@ export interface Env {
   readonly BACKUPS: unknown;
   readonly EMAIL?: unknown;
   readonly ACCESS_AUD?: string;
+  readonly MCP_ACCESS_AUD?: string;
   readonly OWNER_EMAIL?: string;
 }

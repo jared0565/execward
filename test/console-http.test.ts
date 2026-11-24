@@ -461,12 +461,12 @@ describe("the secrets the deployed Worker may hold", () => {
   const live: DeployedVersion = { bindings: [], compatibilityDate: undefined, secrets: [] };
   const secretProblems = (version: DeployedVersion) => deployedProblems(version).filter((problem) => /secret|not on the allowlist/.test(problem));
 
-  it("are the two that say who the owner is, and no credential", () => {
-    expect(ALLOWED_SECRETS).toEqual(["ACCESS_AUD", "OWNER_EMAIL"]);
+  it("are the three that say who the owner is and which sign-in a request came through, and no credential", () => {
+    expect(ALLOWED_SECRETS).toEqual(["ACCESS_AUD", "MCP_ACCESS_AUD", "OWNER_EMAIL"]);
   });
 
   it("allows those, listed either way, and still refuses any other", () => {
-    expect(secretProblems({ ...live, secrets: ["ACCESS_AUD", "OWNER_EMAIL"] })).toEqual([]);
+    expect(secretProblems({ ...live, secrets: ["ACCESS_AUD", "MCP_ACCESS_AUD", "OWNER_EMAIL"] })).toEqual([]);
     expect(secretProblems({ ...live, bindings: [{ type: "secret_text", name: "OWNER_EMAIL" }] })).toEqual([]);
     expect(secretProblems({ ...live, secrets: ["GITHUB_TOKEN"] })).toHaveLength(1);
     expect(secretProblems({ ...live, bindings: [{ type: "secret_text", name: "GITHUB_TOKEN" }] })).toHaveLength(1);

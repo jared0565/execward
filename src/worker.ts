@@ -1,9 +1,10 @@
 /**
  * The core Worker's entry point (task 1.1.1).
  *
- * It answers a health check, serves the owner console, and on a timer it does
+ * It answers a health check, serves the owner console, serves the `code` tool
+ * over MCP at its own address (src/mcp/production.ts), and on a timer it does
  * the housekeeping: closes expired escalations, applies retention and backs
- * the database up. The `code` tool is not served yet.
+ * the database up.
  *
  * The console answers only the owner, signed in through Cloudflare Access
  * (src/console/access.ts). Until Access is set up and its two settings are
@@ -17,6 +18,8 @@ import { CONSOLE_PATH, consoleResponse } from "./console/http";
 import { bindingMailer } from "./console/mailer";
 import { CONTRACT_VERSION } from "./contracts/version";
 import { EXECWARD_VERSION } from "./index";
+import { MCP_PATH } from "./mcp/adapter";
+import { MCP_HOST, mcpResponse } from "./mcp/production";
 import { d1ControlStore, d1EscalationStore, type StateDatabase } from "./storage/d1-stores";
 import type { Env } from "./worker/bindings";
 import { runScheduled, type ScheduledEnv } from "./worker/scheduled";
@@ -34,9 +37,14 @@ function nonce(): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** Every request: the console's addresses first, then the rest. */
+/** Every request: the MCP address, then the console's addresses, then the rest. */
 export async function handle(request: Request, env: Env, access: AccessContext | undefined, now: () => number = Date.now): Promise<Response> {
-  const path = new URL(request.url).pathname;
+  const url = new URL(request.url);
+  // The MCP address serves MCP and nothing else: no console, no health check.
+  if (url.hostname === MCP_HOST) return mcpResponse(request, env, access, now);
+  const path = url.pathname;
+  // And MCP is served at no other address.
+  if (path === MCP_PATH) return Response.json({ error: "not_found" }, { status: 404 });
   if (path !== CONSOLE_PATH && !path.startsWith(`${CONSOLE_PATH}/`)) return handleRequest(request);
   const db = env.DB as StateDatabase & AuditDatabase;
   const principal = await principalFromAccess(access, { audience: env.ACCESS_AUD, ownerEmail: env.OWNER_EMAIL });
