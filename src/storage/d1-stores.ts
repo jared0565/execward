@@ -13,6 +13,8 @@
  */
 import { checkProjectRecord, CLIENT_DATA_GATE, ProjectStoreError, type Gate, type ProjectRecord, type ProjectStore } from "../broker/exposure";
 import type { QuotaStore } from "../broker/quotas";
+import type { AttemptState, AttemptStore } from "../code-tool/stored-attempts";
+import type { ExecWardError } from "../contracts/errors";
 import { INITIAL_CONTROL_STATE, type ControlState, type ControlStore } from "../console/control";
 import type { EscalationItem, EscalationStore } from "../console/escalations";
 import { DATA_CLASSES, type DataClass } from "../contracts/policy";
@@ -100,6 +102,54 @@ export function d1EscalationStore(db: StateDatabase): EscalationStore {
     },
     async all() {
       return (await db.prepare("SELECT item FROM escalations ORDER BY created_at, id").all<{ item: string }>()).results.map((row) => parse(row.item));
+    },
+  };
+}
+
+/** Failed runs in a row, per caller and project (table in migrations/0004_attempts.sql). */
+export function d1AttemptStore(db: StateDatabase): AttemptStore {
+  interface Row {
+    failures: number;
+    closed: string | null;
+    escalation_id: string | null;
+    updated_at: number;
+  }
+  return {
+    async get(key) {
+      const row = await db.prepare("SELECT failures, closed, escalation_id, updated_at FROM attempt_state WHERE key = ?1").bind(key).first<Row>();
+      if (row === null) return undefined;
+      const state: AttemptState = {
+        failures: row.failures,
+        updatedAt: row.updated_at,
+        ...(row.closed === null ? {} : { closed: JSON.parse(row.closed) as ExecWardError }),
+        ...(row.escalation_id === null ? {} : { escalationId: row.escalation_id }),
+      };
+      return state;
+    },
+    async fail(key, now, staleBefore) {
+      // Added to and read back in one statement: two runs failing at once are both counted.
+      const row = await db
+        .prepare(
+          "INSERT INTO attempt_state (key, failures, updated_at) VALUES (?1, 1, ?2) ON CONFLICT(key) DO UPDATE SET failures = CASE WHEN attempt_state.updated_at < ?3 THEN 1 ELSE attempt_state.failures + 1 END, updated_at = ?2 RETURNING failures",
+        )
+        .bind(key, now, staleBefore)
+        .first<{ failures: number }>();
+      if (row === null) throw new Error("the attempt count could not be written");
+      return row.failures;
+    },
+    async close(key, closed, escalationId, now) {
+      await db
+        .prepare(
+          "INSERT INTO attempt_state (key, failures, closed, escalation_id, updated_at) VALUES (?1, 0, ?2, ?3, ?4) ON CONFLICT(key) DO UPDATE SET closed = ?2, escalation_id = ?3, updated_at = ?4",
+        )
+        .bind(key, JSON.stringify(closed), escalationId ?? null, now)
+        .run();
+    },
+    async touch(key, now) {
+      await db.prepare("UPDATE attempt_state SET updated_at = ?2 WHERE key = ?1").bind(key, now).run();
+    },
+    async clear(key) {
+      await db.prepare("DELETE FROM attempt_state WHERE key = ?1").bind(key).run();
     },
   };
 }

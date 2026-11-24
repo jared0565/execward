@@ -20,7 +20,7 @@
  * permission levels in the sign-in. What a client may do is decided by the
  * policy table on every call. See docs/decisions/2.1.2-cli-sign-in.md.
  */
-import { d1AuditStore, type AuditDatabase } from "../audit/log";
+import { auditLog, d1AuditStore, type AuditDatabase } from "../audit/log";
 import { d1PolicyStore, type D1Like } from "../broker/policy-store";
 import { githubPinsAndPolicy, githubUpstream } from "../connectors/github";
 import { githubAppToken, type GithubAppSettings } from "../connectors/github-app";
@@ -31,7 +31,10 @@ import { logMetricsSink } from "../metrics/metrics";
 import { outboundFetch } from "../net/outbound";
 import { registry } from "../registry/registry";
 import { codeToolService, type CodeToolService } from "../service";
-import { d1ControlStore, d1ProjectStore, d1QuotaStore, type StateDatabase } from "../storage/d1-stores";
+import { attemptKey, storedAttemptGate } from "../code-tool/stored-attempts";
+import type { AttemptGate } from "../code-tool/attempts";
+import { escalationQueue, triggerFor } from "../console/escalations";
+import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, type StateDatabase } from "../storage/d1-stores";
 import { mcpAdapter, MCP_PATH } from "./adapter";
 
 /** The one address the MCP server answers at. */
@@ -101,6 +104,34 @@ export async function productionService(env: McpEnv, now: () => number): Promise
   });
 }
 
+/**
+ * Where one caller stands in one project: failed runs in a row, kept in the database
+ * because each request may reach a different copy of the Worker (task 2.1.5). A
+ * closure goes to the owner's queue, and reopens when the owner deals with it.
+ */
+export function productionAttempts(env: McpEnv, callerId: string, now: () => number): (project: string) => Promise<AttemptGate> {
+  const db = env.DB as StateDatabase & AuditDatabase;
+  const escalations = d1EscalationStore(db);
+  const queue = escalationQueue({ store: escalations, control: d1ControlStore(db), audit: auditLog(d1AuditStore(db), now), now, newId: () => crypto.randomUUID() });
+  return (project) =>
+    storedAttemptGate(
+      {
+        store: d1AttemptStore(db),
+        now,
+        async escalate(escalation) {
+          const trigger = triggerFor(escalation);
+          if (trigger === undefined) return undefined;
+          return (await queue.raise({ trigger, project, runId: escalation.runId, error: escalation.error })).id;
+        },
+        async stillOpen(id) {
+          const item = await escalations.get(id);
+          return item !== undefined && item.status === "open" && (item.expiresAt === null || item.expiresAt > now());
+        },
+      },
+      attemptKey(callerId, project),
+    );
+}
+
 function refused(status: number, error: string): Response {
   return Response.json({ error }, { status, headers: { "cache-control": "no-store" } });
 }
@@ -109,12 +140,21 @@ function refused(status: number, error: string): Response {
  * Answers a request that came to the MCP address. `service` is passed in by
  * tests; production builds it from the environment.
  */
-export async function mcpResponse(request: Request, env: McpEnv, access: AccessContext | undefined, now: () => number, service?: CodeToolService): Promise<Response> {
+export async function mcpResponse(
+  request: Request,
+  env: McpEnv,
+  access: AccessContext | undefined,
+  now: () => number,
+  service?: CodeToolService,
+  attemptsFor?: (callerId: string) => (project: string) => Promise<AttemptGate>,
+): Promise<Response> {
   if (new URL(request.url).pathname !== MCP_PATH) return refused(404, "not_found");
   // A web page must never be able to drive the tool with the owner's sign-in.
   if (request.headers.has("origin")) return refused(403, "browser_requests_refused");
   const principal = await principalFromAccess(access, { audience: env.MCP_ACCESS_AUD, ownerEmail: env.OWNER_EMAIL });
   if (principal.kind !== "owner") return refused(401, "sign_in_required");
   // Which provider the client's model runs on is not known from sign-in (task 2.1.6), so the most cautious route applies.
-  return mcpAdapter({ service: service ?? (await productionService(env, now)) }).serve(request, { providerRoute: "unknown" });
+  // With a service passed in and no count, a test is running: each call is then counted alone.
+  const attempts = attemptsFor?.(principal.id) ?? (service === undefined ? productionAttempts(env, principal.id, now) : undefined);
+  return mcpAdapter({ service: service ?? (await productionService(env, now)) }).serve(request, { providerRoute: "unknown", ...(attempts === undefined ? {} : { attemptsFor: attempts }) });
 }

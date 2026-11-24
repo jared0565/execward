@@ -16,7 +16,7 @@
  * builds sign-in, it is mounted only on the test Worker, behind its secret.
  */
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
-import { attemptGate } from "../code-tool/attempts";
+import { attemptGate, type AttemptGate } from "../code-tool/attempts";
 import { CODE_TOOL_DESCRIPTION, CODE_TOOL_NAME } from "../code-tool/description";
 import { presentForModel } from "../code-tool/present";
 import { codeToolInputSchema } from "../contracts/code-tool";
@@ -30,6 +30,11 @@ export const MCP_SERVER_NAME = "execward";
 export interface McpCaller {
   /** How the calling client reaches its model provider: a key of `PROVIDER_ROUTES`. */
   readonly providerRoute: unknown;
+  /**
+   * The count of this caller's failed runs in the named project, kept between requests
+   * (task 2.1.5). Without it each call is counted alone, which is only right for tests.
+   */
+  readonly attemptsFor?: (project: string) => Promise<AttemptGate>;
 }
 
 export interface McpAdapter {
@@ -54,8 +59,9 @@ export function mcpAdapter(deps: { readonly service: CodeToolService }): McpAdap
             annotations: { readOnlyHint: true, openWorldHint: true },
           },
           async (input) => {
-            // One attempt gate per call for now: counting attempts across a session is task 2.1.5.
-            const output = await deps.service(input, { providerRoute: caller.providerRoute, attempts: attemptGate() });
+            // The count of failed runs in a row belongs to the caller and the project, not to this request.
+            const attempts = caller.attemptsFor === undefined ? attemptGate() : await caller.attemptsFor(input.project);
+            const output = await deps.service(input, { providerRoute: caller.providerRoute, attempts });
             return {
               content: [{ type: "text" as const, text: presentForModel(output) }],
               isError: output.status === "error" || output.status === "refused",

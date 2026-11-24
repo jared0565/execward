@@ -1,5 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
+import { attemptGate } from "../src/code-tool/attempts";
 import { CODE_TOOL_DESCRIPTION } from "../src/code-tool/description";
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../src/code-tool/present";
 import type { CodeToolOutput } from "../src/contracts/code-tool";
@@ -141,6 +142,52 @@ describe("the MCP adapter (task 2.1.1, FR-10)", () => {
     expect(client.getServerCapabilities()?.tools?.listChanged ?? false).toBe(false);
     // And a second client, connecting later, is offered exactly the same.
     expect(JSON.stringify((await (await connect(fetch_)).listTools()).tools)).toBe(before);
+  });
+
+  it("counts attempts for the caller and the project named in the call, not for the request (task 2.1.5)", async () => {
+    const seen: { input: unknown; caller: CallerContext }[] = [];
+    const adapter = mcpAdapter({
+      service: async (input, caller) => {
+        seen.push({ input, caller });
+        return { status: "completed", result: 1, truncated: false, untrusted: true, report: REPORT };
+      },
+    });
+    const asked: string[] = [];
+    const gate = attemptGate();
+    const fetch_ = (request: Request) =>
+      adapter.serve(request, {
+        providerRoute: "unknown",
+        attemptsFor: async (project) => {
+          asked.push(project);
+          return gate;
+        },
+      });
+    const client = await connect(fetch_);
+    await client.callTool({ name: "code", arguments: { script: "return 1;", project: "acme" } });
+    await client.callTool({ name: "code", arguments: { script: "return 1;", project: "other" } });
+    expect(asked).toEqual(["acme", "other"]);
+    expect(seen.every((call) => call.caller.attempts === gate)).toBe(true);
+  });
+
+  it("does not run the tool when the count of attempts cannot be read (task 2.1.5)", async () => {
+    const { seen } = setup();
+    const adapter = mcpAdapter({
+      service: async () => {
+        seen.push({ input: undefined, caller: undefined as never });
+        throw new Error("must not be reached");
+      },
+    });
+    const client = await connect((request) =>
+      adapter.serve(request, {
+        providerRoute: "unknown",
+        attemptsFor: async () => {
+          throw new Error("the database is down");
+        },
+      }),
+    );
+    const result = await client.callTool({ name: "code", arguments: { script: "return 1;", project: "acme" } }).catch((error: unknown) => ({ isError: true, thrown: String(error) }));
+    expect(result.isError).toBe(true);
+    expect(seen).toHaveLength(0);
   });
 
   it("refuses a tool it does not offer", async () => {
