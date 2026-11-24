@@ -42,7 +42,8 @@ export function mcpAdapter(deps: { readonly service: CodeToolService }): McpAdap
     async serve(request, caller) {
       // A fresh server and handler for each request: nothing is shared between callers.
       const handler = createMcpHandler(() => {
-        const server = new McpServer({ name: MCP_SERVER_NAME, version: CONTRACT_VERSION });
+        // The list is one tool and never changes (FR-14). The library would otherwise tell clients it may.
+        const server = new McpServer({ name: MCP_SERVER_NAME, version: CONTRACT_VERSION }, { capabilities: { tools: { listChanged: false } } });
         server.registerTool(
           CODE_TOOL_NAME,
           {
