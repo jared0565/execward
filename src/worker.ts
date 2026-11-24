@@ -12,10 +12,11 @@
 import { auditLog, d1AuditStore, type AuditDatabase } from "./audit/log";
 import { principalFromAccess, type AccessContext } from "./console/access";
 import { ownerConsole } from "./console/console";
+import { escalationQueue } from "./console/escalations";
 import { CONSOLE_PATH, consoleResponse } from "./console/http";
 import { CONTRACT_VERSION } from "./contracts/version";
 import { EXECWARD_VERSION } from "./index";
-import { d1ControlStore, type StateDatabase } from "./storage/d1-stores";
+import { d1ControlStore, d1EscalationStore, type StateDatabase } from "./storage/d1-stores";
 import type { Env } from "./worker/bindings";
 import { runScheduled, type ScheduledEnv } from "./worker/scheduled";
 
@@ -38,8 +39,11 @@ export async function handle(request: Request, env: Env, access: AccessContext |
   if (path !== CONSOLE_PATH && !path.startsWith(`${CONSOLE_PATH}/`)) return handleRequest(request);
   const db = env.DB as StateDatabase & AuditDatabase;
   const principal = await principalFromAccess(access, { audience: env.ACCESS_AUD, ownerEmail: env.OWNER_EMAIL });
-  const console_ = ownerConsole({ control: d1ControlStore(db), audit: auditLog(d1AuditStore(db), now), now });
-  return (await consoleResponse(request, { console: console_, principal, nonce })) ?? handleRequest(request);
+  const control = d1ControlStore(db);
+  const audit = auditLog(d1AuditStore(db), now);
+  const console_ = ownerConsole({ control, audit, now });
+  const queue = escalationQueue({ store: d1EscalationStore(db), control, audit, now, newId: () => crypto.randomUUID() });
+  return (await consoleResponse(request, { console: console_, queue, principal, nonce })) ?? handleRequest(request);
 }
 
 export default {

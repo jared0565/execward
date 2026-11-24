@@ -19,6 +19,7 @@ input, select { font: inherit; padding: .4rem; margin: .25rem .25rem .25rem 0; m
 #message { min-height: 1.5rem; font-weight: 600; }
 #message.bad { color: #b00020; }
 ul { padding-left: 1.2rem; }
+.item { border: 1px solid #8886; border-radius: .4rem; padding: .5rem .75rem; margin: .75rem 0; }
 .muted { opacity: .7; }
 `;
 
@@ -43,7 +44,35 @@ const reply = async (response) => {
   if (!response.ok) { say(body.message || "That did not work.", true); return; }
   show(body.state); return body.state;
 };
-const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } };
+const el = (tag, text, cls) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (cls) node.className = cls; return node; };
+const when = (ms) => new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+const showQueue = (body) => {
+  const box = $("queue"); box.replaceChildren();
+  if (body.items.length === 0) box.append(el("p", "Nothing is waiting for you.", "muted"));
+  for (const item of body.items) {
+    const card = el("div", undefined, "item");
+    card.append(el("strong", (item.urgent ? "URGENT: " : "") + item.trigger.replaceAll("_", " ") + " in project " + item.project));
+    card.append(el("p", "Raised " + when(item.createdAt) + (item.expiresAt ? ". Closes by itself " + when(item.expiresAt) : "") + (item.toolPath ? ". Tool: " + item.toolPath : "") + (item.errorCode ? ". Code: " + item.errorCode : "") + "."));
+    card.append(el("p", "Already done to keep things safe: " + item.safeAction));
+    if (item.acknowledgedAt) card.append(el("p", "You chose to keep it this way on " + when(item.acknowledgedAt) + ". It stays here until you choose something that closes it."));
+    const reason = el("input"); reason.maxLength = 200; reason.size = 40; reason.placeholder = "Reason (needed for some choices)";
+    card.append(reason, el("br"));
+    for (const option of item.options) {
+      const button = el("button", option.label + (option.id === item.recommended.optionId ? " (recommended)" : ""));
+      button.title = option.effect;
+      button.onclick = async () => { await act({ action: "resolve", id: item.id, option: option.id, reason: reason.value.trim() }, "Recorded: " + option.label); loadQueue(); };
+      card.append(button, el("span", option.effect + (option.reversible ? "" : " Cannot be undone.") + (option.needsReason ? " Needs a reason." : ""), "muted"), el("br"));
+    }
+    card.append(el("p", "Why that one is recommended: " + item.recommended.rule, "muted"));
+    box.append(card);
+  }
+  list("proposals", body.proposals.map((p) => p.proposal + " (chosen " + p.timesChosen + " times)"), "No rule is proposed.");
+};
+const loadQueue = async () => {
+  try { const response = await fetch("/console/queue"); const body = await response.json().catch(() => ({})); if (response.ok) showQueue(body); else say(body.message || "The queue could not be read.", true); }
+  catch { say("The queue could not be reached.", true); }
+};
+const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } loadQueue(); };
 const act = async (body, done) => {
   say("Working...");
   try {
@@ -77,6 +106,14 @@ export function consolePage(nonce: string): string {
 <body>
 <h1>ExecWard console</h1>
 <p id="message" role="status" aria-live="polite"></p>
+
+<section>
+<h2>Waiting for you</h2>
+<div id="queue"><p class="muted">Loading...</p></div>
+<h2>Proposed rules</h2>
+<ul id="proposals"></ul>
+<p class="muted">A choice you have made several times is listed here as a proposal. Nothing is adopted by itself.</p>
+</section>
 
 <section>
 <h2>Kill switch</h2>

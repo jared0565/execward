@@ -9,6 +9,7 @@
  */
 import { ConsoleAccessError, ConsoleChangeError, type OwnerConsole, type Principal } from "./console";
 import type { ControlState } from "./control";
+import type { EscalationItem, EscalationQueue } from "./escalations";
 import { consolePage } from "./page";
 
 export const CONSOLE_PATH = "/console";
@@ -17,8 +18,47 @@ export const CONSOLE_HEADER = "x-execward-console";
 const MAX_BODY_CHARS = 4000;
 const MAX_FIELD_CHARS = 200;
 
+/**
+ * What the page is given about a queue item: enough to decide, and no more. The run's
+ * report and the error's own text stay in the audit log; they can hold a client's data.
+ */
+export interface QueueItemView {
+  readonly id: string;
+  readonly trigger: string;
+  readonly project: string;
+  readonly createdAt: number;
+  readonly urgent: boolean;
+  readonly expiresAt: number | null;
+  /** When the owner chose to keep it as it is. The item stays open until a choice that closes it. */
+  readonly acknowledgedAt?: number;
+  readonly errorCode?: string;
+  readonly toolPath?: string;
+  readonly safeAction: string;
+  readonly recommended: { readonly optionId: string; readonly rule: string };
+  readonly options: readonly { readonly id: string; readonly label: string; readonly effect: string; readonly reversible: boolean; readonly needsReason: boolean }[];
+}
+
+export function queueItemView(item: EscalationItem): QueueItemView {
+  return {
+    id: item.id,
+    trigger: item.trigger,
+    project: item.project,
+    createdAt: item.createdAt,
+    urgent: item.urgent,
+    expiresAt: item.expiresAt,
+    ...(item.acknowledgedAt === undefined ? {} : { acknowledgedAt: item.acknowledgedAt }),
+    ...(item.error === undefined ? {} : { errorCode: item.error.code }),
+    ...(item.context.toolPath === undefined ? {} : { toolPath: item.context.toolPath }),
+    safeAction: item.safeAction,
+    recommended: item.recommended,
+    options: item.options.map((option) => ({ id: option.id, label: option.label, effect: option.effect, reversible: option.reversible, needsReason: option.needsReason === true })),
+  };
+}
+
 export interface ConsoleHttpDeps {
   readonly console: OwnerConsole;
+  /** The escalation queue (tasks 1.6.6, 1.6.9). Without it the console has no queue address. */
+  readonly queue?: EscalationQueue;
   readonly principal: Principal;
   /** A fresh random value per response, for the page's one script and one style block. */
   readonly nonce: () => string;
@@ -112,6 +152,10 @@ export async function consoleResponse(request: Request, deps: ConsoleHttpDeps): 
     if (path === `${CONSOLE_PATH}/state` && request.method === "GET") {
       return json({ state: await deps.console.state(deps.principal) });
     }
+    if (path === `${CONSOLE_PATH}/queue` && request.method === "GET" && deps.queue !== undefined) {
+      const items = await deps.queue.list(deps.principal);
+      return json({ items: items.map(queueItemView), proposals: await deps.queue.proposals(deps.principal) });
+    }
     if (path === `${CONSOLE_PATH}/action` && request.method === "POST") {
       // Who is asking is settled before anything the request carries is read.
       await deps.console.state(deps.principal);
@@ -126,7 +170,13 @@ export async function consoleResponse(request: Request, deps: ConsoleHttpDeps): 
         return json({ error: "bad_request", message: "the request is not JSON" }, 400);
       }
       if (typeof body !== "object" || body === null || Array.isArray(body)) return json({ error: "bad_request", message: "the request is not a JSON object" }, 400);
-      return json({ state: await act(deps.console, deps.principal, body as Record<string, unknown>) });
+      const sent = body as Record<string, unknown>;
+      if (sent.action === "resolve" && deps.queue !== undefined) {
+        // The owner's choice on a queue item. The queue checks the principal again and applies the choice.
+        const resolved = await deps.queue.resolve(deps.principal, field(sent, "id"), field(sent, "option"), field(sent, "reason", { required: false }) || undefined);
+        return json({ state: await deps.console.state(deps.principal), resolved: { id: resolved.id, status: resolved.status } });
+      }
+      return json({ state: await act(deps.console, deps.principal, sent) });
     }
   } catch (error) {
     if (error instanceof BadRequest) return json({ error: "bad_request", message: error.message }, 400);
