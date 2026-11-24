@@ -19,7 +19,7 @@ import type { MetricsSink } from "./metrics/metrics";
 import { runCodeTool } from "./code-tool/run";
 import type { CodeToolOutput } from "./contracts/code-tool";
 import type { PolicyRecord } from "./contracts/policy";
-import type { Executor } from "./executor";
+import type { ExecutionLimits, Executor } from "./executor";
 
 export interface CodeToolServiceDeps {
   readonly executor: Executor;
@@ -41,6 +41,8 @@ export interface CodeToolServiceDeps {
   readonly newRunId: () => string;
   /** Only tests pass this. Production uses `CLIENT_DATA_GATE`. */
   readonly gate?: Gate;
+  /** Only the adversarial suite passes this, to set the caps a case then tries to pass. Production uses `RUN_LIMITS`. */
+  readonly limits?: ExecutionLimits;
 }
 
 /**
@@ -109,6 +111,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       attempts: caller.attempts,
       meter: deps.meter,
       metrics: deps.metrics,
+      ...(deps.limits ? { limits: deps.limits } : {}),
       control: runGate(deps.control),
       exposure,
       admission: {

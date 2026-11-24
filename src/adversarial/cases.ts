@@ -92,13 +92,19 @@ const sensitiveRead = {
 
 const CANARY_ENV = "EXECWARD_ADVERSARIAL_CANARY";
 
-/** Sets a stand-in secret in the host environment for the length of one run. */
+/**
+ * Sets a stand-in secret in the host environment for the length of one run.
+ * Where the suite itself runs with no host environment (inside a Worker), there
+ * is nowhere to plant it; the script still makes its attempt.
+ */
 async function withHostCanary<T>(body: () => Promise<T>): Promise<T> {
-  process.env[CANARY_ENV] = CANARY;
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  if (!env) return body();
+  env[CANARY_ENV] = CANARY;
   try {
     return await body();
   } finally {
-    delete process.env[CANARY_ENV];
+    delete env[CANARY_ENV];
   }
 }
 
@@ -763,7 +769,8 @@ return { total: first.count };`,
       if (!target.auditLog) return unprobed("auditLog");
       await target.auditLog.record("policy_denied github_merge_pull_request");
       const lines = await target.auditLog.record("run completed");
-      const edited = lines.map((line, index) => (index === 0 ? line.replace("policy_denied", "allowed") + " " : line));
+      // The line this case wrote, wherever it sits: a real log may hold earlier entries.
+      const edited = lines.map((line) => (line.includes("policy_denied") ? line.replace("policy_denied", "allowed") + " " : line));
       const stillVerifies = await target.auditLog.verify(edited);
       return verdict(!stillVerifies, "The edit was detected.", "An edited log still verified.");
     },

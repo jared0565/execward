@@ -30,6 +30,7 @@ import { codeToolService } from "../../src/service";
 import { runScheduled } from "../../src/worker/scheduled";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
+import { ADVERSARIAL_CASES, execwardTarget, JUDGED_FROM_THE_BUILD, runSuite } from "../../src/adversarial";
 
 interface AuditBody {
   readonly events: readonly { kind: string; runId: string; project: string; security?: boolean; body: unknown; ageDays?: number }[];
@@ -290,6 +291,26 @@ export default {
       if (!body.verify) return Response.json({ output });
       const entries = await auditStore.all();
       return Response.json({ output, auditEntries: entries.length, chain: await verifyChain(entries, (await auditStore.anchor()) ?? undefined) });
+    }
+    if (route === "/adversarial") {
+      // The adversarial suite against ExecWard itself, where the sandbox is real (FR-31, Gate 1).
+      const target = execwardTarget({ executor: dynamicWorkerExecutor(env.LOADER) });
+      const cases = ADVERSARIAL_CASES.filter((item) => !JUDGED_FROM_THE_BUILD.includes(item.id));
+      // Beside each verdict, how each script run ended: what stopped it, not only that it was stopped.
+      const results = [];
+      for (const item of cases) {
+        const runs: { status: string; errorCode?: string }[] = [];
+        const watched = {
+          ...target,
+          runScript: async (run: Parameters<NonNullable<typeof target.runScript>>[0]) => {
+            const result = await target.runScript!(run);
+            runs.push({ status: result.status, ...(result.errorCode ? { errorCode: result.errorCode } : {}) });
+            return result;
+          },
+        };
+        results.push({ ...(await runSuite(watched, [item]))[0], runs });
+      }
+      return Response.json({ target: target.name, results });
     }
     if (route === "/fixture") {
       // The code tool over the invented GitHub, for the Code Mode arm of the eval (task 1.9.5).
