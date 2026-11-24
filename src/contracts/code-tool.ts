@@ -71,6 +71,12 @@ export const runReportSchema = z.strictObject({
 export type RunReport = z.infer<typeof runReportSchema>;
 
 /** Contract 2: what the server returns. One shape per status. */
+/**
+ * Plain lines from the server about the call itself, not from any tool (contract
+ * 1.6.0, FR-18): for example that a switch changed since the caller's last call.
+ */
+const notices = { notices: z.array(z.string().max(400)).max(8).optional() };
+
 export const codeToolOutputSchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("completed"),
@@ -82,12 +88,14 @@ export const codeToolOutputSchema = z.discriminatedUnion("status", [
     logs: z.array(z.string()).optional(),
     ...hygiene,
     report: runReportSchema,
+    ...notices,
   }),
   z.strictObject({
     status: z.literal("paused"),
     /** Identifies the held action in the owner console. Never counts as sign-in (FR-26). */
     escalation_id: z.string().min(1),
     report: runReportSchema,
+    ...notices,
   }),
   z.strictObject({
     status: z.literal("error"),
@@ -96,12 +104,14 @@ export const codeToolOutputSchema = z.discriminatedUnion("status", [
     logs: z.array(z.string()).optional(),
     ...hygiene,
     report: runReportSchema,
+    ...notices,
   }),
   z.strictObject({
     /** The script never ran: it failed the pre-execution checks or policy. */
     status: z.literal("refused"),
     error: errorSchema,
     report: runReportSchema,
+    ...notices,
   }),
 ]);
 

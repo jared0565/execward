@@ -35,6 +35,8 @@ export interface McpCaller {
    * (task 2.1.5). Without it each call is counted alone, which is only right for tests.
    */
   readonly attemptsFor?: (project: string) => Promise<AttemptGate>;
+  /** Lines to add to the reply: switches that changed since this caller's last call (task 2.1.4). */
+  readonly noticesFor?: (project: string) => Promise<readonly string[]>;
 }
 
 export interface McpAdapter {
@@ -61,7 +63,10 @@ export function mcpAdapter(deps: { readonly service: CodeToolService }): McpAdap
           async (input) => {
             // The count of failed runs in a row belongs to the caller and the project, not to this request.
             const attempts = caller.attemptsFor === undefined ? attemptGate() : await caller.attemptsFor(input.project);
-            const output = await deps.service(input, { providerRoute: caller.providerRoute, attempts });
+            // Read before the run, so the notice describes the settings this call met.
+            const notices = (await caller.noticesFor?.(input.project).catch(() => [])) ?? [];
+            const ran = await deps.service(input, { providerRoute: caller.providerRoute, attempts });
+            const output = notices.length === 0 ? ran : { ...ran, notices: [...notices] };
             return {
               content: [{ type: "text" as const, text: presentForModel(output) }],
               isError: output.status === "error" || output.status === "refused",
