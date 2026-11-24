@@ -89,8 +89,17 @@ Add an adversarial test for the way in, so the same route fails the suite from n
 
 ## Gaps in this runbook today
 
-- No console pages exist, so step 1's first row cannot be done by clicking.
-- No export tool for the audit log exists. Step 3.2 means a database query for now.
+- The console exists (2026-11-24), at console.execward.com: step 1 is the "Stop
+  everything now" button. **If the owner cannot sign in, there is no quick stop.** The
+  console needs the owner's mailbox and their one enrolled second factor. The slow stop
+  is to disable the Worker from the Cloudflare account. A second factor or a written
+  break-glass step is still to be decided.
+- The export tool exists (2026-11-24): `npm run audit:export` does steps 3.2 and 3.3,
+  and `npm run audit:export -- --check FILE` checks a copy again. It writes to the
+  owner's computer; the copy kept somewhere else is still made by hand.
+- The first drill was held on 2026-11-24 and covered steps 1, 3 and 6 only. See
+  docs/governance/drills/2026-11-24-first-drill.md. Next drill due by the end of
+  February 2027.
 - A daily backup of production now runs (task 1.4.5) and is kept seven days. Restoring
   one is a function, with no command to run it yet.
 - No alerting exists (task 3.1.10). An incident is found by reading the queue or by
