@@ -76,8 +76,33 @@ const logMeterSink: MeterSink = {
   },
 };
 
+/** The header a CLI's config sets to say which model it is running (task 2.1.6). */
+export const MODEL_HEADER = "x-execward-model";
+/** The header a CLI's config may set to name itself. Without it, the name is taken from `User-Agent`. */
+export const CLIENT_HEADER = "x-execward-client";
+
+const LABEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
+
+/**
+ * What the calling CLI says about itself, for grouping reports (task 2.1.6). MCP
+ * requests carry no model field, so each CLI's own config passes the name in a header.
+ *
+ * These are the client's own words, unchecked. They label a report line and decide
+ * nothing: not who the caller is, not what it may read. A value that is not a plain
+ * short name is dropped.
+ */
+export function callerLabels(request: Request): Record<string, string> {
+  const labels: Record<string, string> = {};
+  const model = request.headers.get(MODEL_HEADER)?.trim();
+  if (model !== undefined && LABEL.test(model)) labels.model = model;
+  // "claude-code/2.1.0 (...)" gives "claude-code".
+  const client = request.headers.get(CLIENT_HEADER)?.trim() ?? request.headers.get("user-agent")?.trim().split(/[\s/]/)[0];
+  if (client !== undefined && LABEL.test(client)) labels.client = client;
+  return labels;
+}
+
 /** The code tool with every store on the production database. */
-export async function productionService(env: McpEnv, now: () => number): Promise<CodeToolService> {
+export async function productionService(env: McpEnv, now: () => number, labels: Readonly<Record<string, string>> = {}): Promise<CodeToolService> {
   const db = env.DB as StateDatabase & AuditDatabase;
   // Loaded when first needed: the sandbox module exists only inside the Workers runtime.
   const { dynamicWorkerExecutor } = await import("../executor/dynamic-worker");
@@ -98,7 +123,7 @@ export async function productionService(env: McpEnv, now: () => number): Promise
     definitionFor: (record) => pinned.definitionFor(record),
     docsFor: (path) => pinned.docsFor(path),
     // No level named: the default, summary since Gate 1.
-    meter: meter({ sink: logMeterSink }),
+    meter: meter({ sink: logMeterSink, ...(Object.keys(labels).length === 0 ? {} : { labels }) }),
     metrics: logMetricsSink(),
     now,
     newRunId: () => crypto.randomUUID(),
@@ -161,7 +186,7 @@ export async function mcpResponse(
   const db = env.DB as StateDatabase;
   const noticesFor =
     service === undefined ? (project: string) => switchNotices({ store: d1SettingsSeenStore(db), control: d1ControlStore(db), now }, attemptKey(principal.id, project), project) : undefined;
-  return mcpAdapter({ service: service ?? (await productionService(env, now)) }).serve(request, {
+  return mcpAdapter({ service: service ?? (await productionService(env, now, callerLabels(request))) }).serve(request, {
     providerRoute: "unknown",
     ...(attempts === undefined ? {} : { attemptsFor: attempts }),
     ...(noticesFor === undefined ? {} : { noticesFor }),

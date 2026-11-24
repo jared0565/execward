@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { AccessContext } from "../src/console/access";
 import type { CodeToolOutput } from "../src/contracts/code-tool";
-import { MCP_HOST, mcpResponse } from "../src/mcp/production";
+import { callerLabels, MCP_HOST, mcpResponse } from "../src/mcp/production";
+import { memoryMeterSink, meter } from "../src/meter/meter";
 import type { CallerContext } from "../src/service";
 import { handle } from "../src/worker";
 import type { Env } from "../src/worker/bindings";
@@ -114,6 +115,44 @@ describe("signing in to the MCP server (task 2.1.2, FR-25)", () => {
     for (const path of ["/", "/health", "/console", "/console/state", "/mcp/extra"]) {
       expect((await ask(list({}, `https://${MCP_HOST}${path}`), access())).status, path).toBe(404);
     }
+  });
+});
+
+describe("what a CLI says about itself, for reports (task 2.1.6)", () => {
+  const labels = (headers: Record<string, string>) => callerLabels(new Request(`https://${MCP_HOST}/mcp`, { headers }));
+
+  it("takes the model name from the header each CLI's config sets", () => {
+    expect(labels({ "x-execward-model": "claude-sonnet-5-5", "user-agent": "claude-code/2.1.330 (cli)" })).toEqual({ model: "claude-sonnet-5-5", client: "claude-code" });
+    expect(labels({ "x-execward-model": "gpt-5.5-codex", "x-execward-client": "codex" })).toEqual({ model: "gpt-5.5-codex", client: "codex" });
+    expect(labels({ "x-execward-model": "openrouter/anthropic/claude-haiku-5-5:free" }).model).toBe("openrouter/anthropic/claude-haiku-5-5:free");
+  });
+
+  it("gives no label when the CLI says nothing", () => {
+    expect(labels({})).toEqual({});
+  });
+
+  it.each(["", "   ", "a model with spaces", "x".repeat(81), '"}],"injected":true', "-starts-with-a-dash", "tab\there"])("drops the value %j: it is not a plain short name", (value) => {
+    expect(labels({ "x-execward-model": value }).model).toBeUndefined();
+  });
+
+  it("lets a label reach a report line, where runs are grouped by it", async () => {
+    const sink = memoryMeterSink();
+    const metering = meter({ sink, labels: labels({ "x-execward-model": "claude-sonnet-5-5", "x-execward-client": "claude-code" }) });
+    await metering.start({ runId: "run-1", project: "acme" }).finish({ script: "return 1;", returned: 1 });
+    expect(sink.records[0]?.labels).toEqual({ model: "claude-sonnet-5-5", client: "claude-code" });
+  });
+
+  it("decides nothing: a model name does not sign anyone in or change what a caller may read", async () => {
+    const { ask, seen } = setup();
+    const claimed = { "x-execward-model": "claude-opus-5-5", "x-execward-client": "trusted-enterprise-client" };
+    expect((await ask(list(claimed), undefined)).status).toBe(401);
+    const call = new Request(`https://${MCP_HOST}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-06-18", ...claimed },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "code", arguments: { script: "return 1;", project: "work" } } }),
+    });
+    await ask(call, access());
+    expect(seen.map((caller) => caller.providerRoute)).toEqual(["unknown"]);
   });
 });
 
