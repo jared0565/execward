@@ -28,6 +28,7 @@ import type { Executor } from "../executor";
 import { RUN_LIMITS } from "../limits";
 import { memoryMeterSink, meter } from "../meter/meter";
 import { memoryMetricsSink } from "../metrics/metrics";
+import { MCP_HOST, mcpResponse } from "../mcp/production";
 import type { ToolDefinitionRecord } from "../registry/definition";
 import { approve, registry, type Pin } from "../registry/registry";
 import { typingsFor } from "../registry/typings";
@@ -157,6 +158,30 @@ export function execwardTarget(deps: { readonly executor: Executor; readonly now
           return false;
         }
       },
+    },
+
+    // Sign-in for model clients (FR-25). Access turns a client's token into `ctx.access`, carrying the
+    // audience of the application the token was issued for. This asks the real MCP entry point with a
+    // sign-in for the given audience, by the owner, and reports whether the request was served.
+    async acceptsToken(token) {
+      const ownAudience = "a".repeat(64);
+      const owner_ = "owner@example.test";
+      const request = new Request(`https://${MCP_HOST}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-protocol-version": "2025-06-18" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      const response = await mcpResponse(
+        request,
+        { LOADER: undefined, DB: undefined, MCP_ACCESS_AUD: ownAudience, OWNER_EMAIL: owner_ },
+        { aud: token.audience, getIdentity: async () => ({ email: owner_, iat: Math.floor(now() / 1000), user_uuid: "adversarial" }) },
+        now,
+        // Never reached by a tool list. It is here so the real service is not built from an empty environment.
+        async () => {
+          throw new Error("not reached");
+        },
+      );
+      return response.status === 200;
     },
 
     // The console has no password of its own. What it asks is a signed-in owner
