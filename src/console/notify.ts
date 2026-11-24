@@ -43,7 +43,9 @@ export interface NotifierDeps {
   readonly baseUrl: string;
   /**
    * How often `remind` is run. When set, a reminder is decided from the clock alone: it is due on
-   * the run in which the item's age passes a whole number of reminder periods. A Worker on a timer
+   * the first run after the item was raised, and then on each run in which the item's age passes a
+   * whole number of reminder periods. Do not also call `raised` for the same items, or the first
+   * email is sent twice. A Worker on a timer
    * keeps no memory between runs, and without this it would send again on every run.
    */
   readonly tickMs?: number;
@@ -80,7 +82,8 @@ export function notifier(deps: NotifierDeps): Notifier {
         const due =
           deps.tickMs === undefined
             ? now - (lastSent.get(item.id) ?? item.createdAt) >= every
-            : age >= every && Math.floor(age / every) !== Math.floor((age - deps.tickMs) / every);
+            : // The first run after the item appeared is its first email; after that, once per period.
+              (age >= 0 && age < deps.tickMs) || (age >= every && Math.floor(age / every) !== Math.floor((age - deps.tickMs) / every));
         if (!due) continue;
         await deps.mailer.send(urgentEmail(deps.baseUrl));
         lastSent.set(item.id, now);

@@ -392,14 +392,20 @@ describe("sending email (task 1.6.7)", () => {
     const TICK = 5 * 60 * 1000;
     let sent = 0;
     // A new notifier every run, as on a Worker: nothing is carried from one run to the next.
-    for (let now = item.createdAt; now <= item.createdAt + 3 * HOUR + TICK; now += TICK) {
+    const times: number[] = [];
+    // The timer's runs do not line up with the moment the item was raised.
+    for (let now = item.createdAt + 2 * 60 * 1000; now <= item.createdAt + 3 * HOUR + TICK; now += TICK) {
       const fresh = notifier({ mailer: { send: async () => void (sent += 1) }, baseUrl: CONSOLE_URL, tickMs: TICK });
+      const before = sent;
       await fresh.remind([item], now);
+      if (sent > before) times.push(Math.round((now - item.createdAt) / 60000));
     }
-    expect(sent).toBe(3);
+    // Minutes after it was raised: within five minutes, then once an hour.
+    expect(times).toEqual([2, 62, 122, 182]);
+    expect(sent).toBe(4);
   });
 
-  it("does not remind before the first hour is up, or about an item that is not urgent", async () => {
+  it("does not write again between the first email and the first hour, or about an item that is not urgent", async () => {
     const { queue } = setup();
     const urgent = await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1" });
     const calm = await queue.raise({ trigger: "definition_changed", project: "acme", runId: "run-2", context: { toolPath: "github.list_issues" } });
