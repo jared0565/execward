@@ -20,7 +20,8 @@ import { escalationQueue } from "../console/escalations";
 import { bindingMailer, CONSOLE_URL } from "../console/mailer";
 import { notifier } from "../console/notify";
 import { runMaintenance, type JobResult } from "../maintenance";
-import { d1ControlStore, d1EscalationStore, d1QuotaStore, sweepQuotaCounters, type StateDatabase } from "../storage/d1-stores";
+import { STATS_KEEP_MS } from "../meter/stats";
+import { d1ControlStore, d1EscalationStore, d1QuotaStore, d1StatsStore, sweepQuotaCounters, type StateDatabase } from "../storage/d1-stores";
 import { runGoldenCheck } from "../verify/golden";
 import { productionReviewer } from "../verify/production";
 
@@ -57,6 +58,7 @@ export async function runScheduled(env: ScheduledEnv, now: number, newId: () => 
     escalations,
     ...(mailer === undefined ? {} : { notifier: notifier({ mailer, baseUrl: CONSOLE_URL, tickMs: SCHEDULE_MS }) }),
     sweepCounters: (at: number) => sweepQuotaCounters(db, at),
+    trimStats: (at: number) => d1StatsStore(db).trim(at - STATS_KEEP_MS),
     // FR-45: the reviewer model is given its known-answer cases, at most once a day.
     checkReviewer: () => {
       const reviewing = productionReviewer({ key: () => env.VERIFY_OPENAI_API_KEY, quotas: d1QuotaStore(db), now: () => now, ...(outbound ? { fetch: outbound } : {}) });

@@ -37,9 +37,10 @@ import { codeToolService, type CodeToolService } from "../service";
 import { attemptKey, storedAttemptGate } from "../code-tool/stored-attempts";
 import type { AttemptGate } from "../code-tool/attempts";
 import { escalationQueue, triggerFor } from "../console/escalations";
-import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1SettingsSeenStore, type StateDatabase } from "../storage/d1-stores";
+import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1SettingsSeenStore, d1StatsStore, type StateDatabase } from "../storage/d1-stores";
 import { productionReviewer } from "../verify/production";
 import { quotaNetSavingStore } from "../meter/net-saving";
+import { statsRowOf } from "../meter/stats";
 import { switchNotices } from "./switch-notice";
 import { mcpAdapter, MCP_PATH } from "./adapter";
 
@@ -85,6 +86,7 @@ const logMeterSink: MeterSink = {
 
 /** The header a CLI's config sets to say which model it is running (task 2.1.6). */
 export const MODEL_HEADER = "x-execward-model";
+export const SESSION_HEADER = "mcp-session-id";
 /** The header a CLI's config may set to name itself. Without it, the name is taken from `User-Agent`. */
 export const CLIENT_HEADER = "x-execward-client";
 
@@ -100,6 +102,9 @@ const LABEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
  */
 export function callerLabels(request: Request): Record<string, string> {
   const labels: Record<string, string> = {};
+  // A client that keeps a session says so with the MCP session header. Most do not: this server issues none.
+  const session = request.headers.get(SESSION_HEADER)?.trim();
+  if (session !== undefined && LABEL.test(session)) labels.session = session;
   const model = request.headers.get(MODEL_HEADER)?.trim();
   if (model !== undefined && LABEL.test(model)) labels.model = model;
   // "claude-code/2.1.0 (...)" gives "claude-code".
@@ -137,7 +142,10 @@ export async function productionService(env: McpEnv, now: () => number, labels: 
     // FR-48: the reviewer, on its own key, host list and budget. With no key stored it is refused
     // before anything is sent, and results stay `unreviewed`.
     // The net saving after verification, by kind of run, for the owner's console (task 2.2.5).
-    netSaving: (entry) => quotaNetSavingStore(d1QuotaStore(db)).add(entry, now()),
+    // And one row per run for the stats report (task 2.3.1). Each is kept apart: one failing does not lose the other.
+    netSaving: async (entry) => {
+      await Promise.allSettled([quotaNetSavingStore(d1QuotaStore(db)).add(entry, now()), d1StatsStore(db).write(statsRowOf(entry.record, now(), entry.verification))]);
+    },
     // While the daily check has the reviewer switched off (task 2.2.4), it is not asked either.
     review: (input) => productionReviewer({ key: () => env.VERIFY_OPENAI_API_KEY, quotas: d1QuotaStore(db), now }).forRuns.review(input),
     // FR-43: a critical figure that does not match goes to the owner's queue, and the result is held.

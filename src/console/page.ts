@@ -84,7 +84,20 @@ const loadSaving = async () => {
   try { const response = await fetch("/console/saving"); const body = await response.json().catch(() => ({})); if (response.ok && body.saving) showSaving(body.saving); else list("saving", [], "The figures could not be read."); }
   catch { list("saving", [], "The figures could not be read."); }
 };
-const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } loadQueue(); loadSaving(); };
+const showStats = (stats) => {
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  $("statsPeriod").textContent = "From " + day(stats.from) + " to " + day(stats.to) + ".";
+  for (const by of ["project", "client", "model", "session"]) {
+    list("stats-" + by, (stats.by[by] || []).map((group) =>
+      group.key + ": " + group.runs + " runs. Estimated saving " + group.estimated.savingTokens + " tokens. Measured: " + group.measured.verifiedRuns + " verified, using " + group.measured.verificationTokens + " tokens."), "No run in this period.");
+  }
+  list("statsNotes", stats.notes || [], "");
+};
+const loadStats = async () => {
+  try { const response = await fetch("/console/stats"); const body = await response.json().catch(() => ({})); if (response.ok && body.stats) showStats(body.stats); else list("statsNotes", [], "The stats could not be read."); }
+  catch { list("statsNotes", [], "The stats could not be read."); }
+};
+const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } loadQueue(); loadSaving(); loadStats(); };
 const act = async (body, done) => {
   say("Working...");
   try {
@@ -141,6 +154,16 @@ export function consolePage(nonce: string): string {
 <p id="savingPeriod" class="muted"></p>
 <ul id="saving"><li class="muted">Loading...</li></ul>
 <p class="muted">The saving is an estimate from a rough rule of one token per four bytes. Verification tokens are the provider's own count. A kind of run marked NEGATIVE uses more tokens than it saves.</p>
+</section>
+
+<section>
+<h2>Stats</h2>
+<p id="statsPeriod" class="muted"></p>
+<h3>By project</h3><ul id="stats-project"></ul>
+<h3>By client</h3><ul id="stats-client"></ul>
+<h3>By model</h3><ul id="stats-model"></ul>
+<h3>By session</h3><ul id="stats-session"></ul>
+<ul id="statsNotes" class="muted"></ul>
 </section>
 
 <section>

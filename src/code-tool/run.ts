@@ -113,7 +113,7 @@ export interface CodeToolDeps {
    * Told each metered run's figures and what verifying it used, for the net
    * saving (task 2.2.5). Failing, it loses the figure and nothing else.
    */
-  readonly netSaving?: (entry: NetSavingEntry) => Promise<void>;
+  readonly netSaving?: (entry: NetSavingEntry & { readonly record: MeterRecord }) => Promise<void>;
 }
 
 /** What a model is told when a result is held. Fixed words: nothing a script wrote. */
