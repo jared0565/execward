@@ -3,44 +3,92 @@ name: ExecWard
 description: The owner's console for security-first Code Mode.
 colors:
   stop-red: "#b00020"
+  stop-red-pressed: "#8f001a"
   on-stop: "#ffffff"
-  hairline: "#8884"
-  item-border: "#8886"
+  failure-on-dark: "#ff8a98"
+  page: "#fbfbfa"
+  surface: "#ffffff"
+  ink: "#1a1c1e"
+  quiet-ink: "#5b6068"
+  hairline: "#d9dce0"
+  control-edge: "#8b9099"
+  hover: "#f0f1f2"
+  pressed: "#e4e6e8"
+  page-dark: "#131416"
+  surface-dark: "#1b1d20"
+  ink-dark: "#e8e9eb"
+  quiet-ink-dark: "#a3a8b0"
+  hairline-dark: "#33363b"
+  control-edge-dark: "#7a808a"
+  hover-dark: "#25282c"
+  pressed-dark: "#2e3136"
 typography:
   title:
     fontFamily: "system-ui, sans-serif"
-    fontSize: "1.4rem"
-    lineHeight: 1.5
+    fontSize: "1.5rem"
+    fontWeight: 700
+    lineHeight: 1.25
   headline:
     fontFamily: "system-ui, sans-serif"
-    fontSize: "1.1rem"
+    fontSize: "1.125rem"
+    fontWeight: 700
+    lineHeight: 1.3
+  subhead:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 700
     lineHeight: 1.5
   body:
     fontFamily: "system-ui, sans-serif"
-    fontSize: "16px"
+    fontSize: "1rem"
     lineHeight: 1.5
   label:
     fontFamily: "system-ui, sans-serif"
-    fontSize: "16px"
+    fontSize: "0.875rem"
     fontWeight: 600
     lineHeight: 1.5
+  note:
+    fontFamily: "system-ui, sans-serif"
+    fontSize: "0.875rem"
+    lineHeight: 1.5
 rounded:
-  item: "0.4rem"
+  control: "0.375rem"
+  item: "0.5rem"
 spacing:
-  control-gap: "0.25rem"
-  control-pad: "0.5rem 1rem"
-  field-pad: "0.4rem"
-  item-pad: "0.5rem 0.75rem"
+  control-gap: "0.5rem"
+  field-gap: "0.75rem"
+  item-pad: "1rem"
   section-gap: "2rem"
 components:
+  button:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "0.5rem 0.9rem"
+    height: "2.75rem"
+  button-hover:
+    backgroundColor: "{colors.hover}"
+  button-active:
+    backgroundColor: "{colors.pressed}"
   button-stop:
     backgroundColor: "{colors.stop-red}"
     textColor: "{colors.on-stop}"
-    typography: "{typography.label}"
-    padding: "0.5rem 1rem"
+    rounded: "{rounded.control}"
+    padding: "0.5rem 0.9rem"
+    height: "2.75rem"
+  button-stop-hover:
+    backgroundColor: "{colors.stop-red-pressed}"
+  field:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.control}"
+    padding: "0.5rem 0.6rem"
+    height: "2.75rem"
   queue-item:
+    backgroundColor: "{colors.surface}"
     rounded: "{rounded.item}"
-    padding: "0.5rem 0.75rem"
+    padding: "1rem"
 ---
 
 # Design System: ExecWard
@@ -53,41 +101,49 @@ The console is the labelled switch panel on a piece of equipment. Every control 
 plain words what it does. The stop control is unmistakable. Nothing decorates. It is
 quiet until something needs the owner, and then the thing that needs them is at the top.
 
-This file records the console as it stands on 2026-11-25. It has never had a design
-pass. What is here is the browser's own look with a handful of choices on top: one
-column, the system typeface, hairline rules between sections, and one red kept for
-stopping. Treat it as an honest record of the starting point, not as a finished
-identity to be defended.
+It had its first design pass on 2026-11-25. That pass kept the bare starting point (one
+column, the system typeface, one red) and gave it what it lacked: an order that puts
+stopping near the top, one consistent set of controls with real states, figures in
+aligned tables, and colours that hold in light and dark.
 
 **Key Characteristics:**
-- One narrow column, read top to bottom.
-- The system typeface at one size, with weight and a slightly larger size for headings.
-- The browser's own buttons, fields and colours, in the reader's light or dark scheme.
+- One narrow column, read top to bottom, in order of urgency.
+- A one-line summary under the title: the kill switch and Code Mode at a glance.
+- The system typeface, in a tight scale.
+- Neutral greys for everything but stopping.
 - One red, used only for the stop button and for a message that reports a failure.
 - No shadows, no images, no icons, no motion.
 - Nothing loaded from anywhere else.
 
 ## Colors
 
-Almost no colour of its own: text and background are the browser's, following the
-reader's light or dark setting.
+A neutral, slightly cool grey scale in a light and a dark set, chosen by the reader's
+own setting. One red.
 
 ### Primary
 - **Stop Red** (`stop-red`): the "Stop everything now" button, and the status message
-  when it reports a failure. Nothing else.
+  when it reports a failure. It darkens to `stop-red-pressed` on hover and press.
+- **Failure on Dark** (`failure-on-dark`): the failure message in the dark set, where
+  Stop Red would be too dim to read as text.
 
 ### Neutral
-- **On Stop** (`on-stop`): the text on the stop button.
-- **Hairline** (`hairline`): the rule above each section. A translucent grey, so it
-  holds in both light and dark schemes.
-- **Item Border** (`item-border`): the outline of a queue item, a little stronger than
-  the hairline.
-- Text and page background are not set. They are the browser's defaults under
-  `color-scheme: light dark`.
+- **Page** and **Surface** (`page`, `surface`): the page, and the slightly lighter
+  ground of controls and queue items.
+- **Ink** (`ink`): text, and the focus ring.
+- **Quiet Ink** (`quiet-ink`): secondary text. A colour of its own, never the main text
+  made see-through, so it keeps its contrast.
+- **Hairline** (`hairline`): the rule above each section, table rules, the queue item's
+  outline.
+- **Control Edge** (`control-edge`): the outline of buttons and fields, strong enough
+  to find a control by.
+- **Hover** and **Pressed** (`hover`, `pressed`): a button under the pointer and under
+  the finger.
+- Each has a `-dark` partner for the dark set.
 
 ### Named Rules
 **The One Red Rule.** Red means stop or failed. It is never used to decorate, to brand,
-or to mark something as merely important.
+or to mark something as merely important. A kind of run that loses tokens is marked in
+words and weight, not in red.
 
 ## Typography
 
@@ -97,73 +153,92 @@ or to mark something as merely important.
 No typeface is loaded.
 
 ### Hierarchy
-- **Title** (1.4rem): the page's one title, "ExecWard console".
-- **Headline** (1.1rem, 2rem above): the name of each section.
-- **Body** (16px, line height 1.5): everything else, including buttons and fields,
-  which inherit it.
-- **Label** (weight 600): the status message under the title, and the stop button.
+- **Title** (700, 1.5rem, 1.25): the page's one title.
+- **Headline** (700, 1.125rem, 1.3): the name of each section.
+- **Subhead** (700, 1rem): a grouping inside a section, such as "By project".
+- **Body** (1rem, 1.5): text, buttons and fields.
+- **Label** (600, 0.875rem): the name above a field, and table headings.
+- **Note** (0.875rem, Quiet Ink): the short explanation under a control, what an option
+  does, and the caveats under a set of figures.
 
-Secondary text is the body at 70% opacity (the `muted` class): the short explanation
-under a control, and what an option does.
+Figures in tables use tabular numerals and are set to the right, with thousands
+separated.
 
 ## Layout
 
-One column, at most 44rem wide, centred, with 1rem of padding at the sides and 2rem
-above. Sections follow in a fixed order, each opening with a hairline rule and its
-headline. Controls flow inline and wrap; fields never exceed the column. There are no
-breakpoints: the same column serves a phone and a desk.
+One column, at most 44rem wide, centred, with 1rem of padding at the sides. Sections
+follow in a fixed order, each opening with a hairline and its headline, 2rem apart.
 
-The order is by urgency: what is waiting for the owner first, then figures, then the
-kill switch and the other switches.
+The order is by urgency: what is waiting for the owner; the kill switch; Code Mode;
+paused projects; blocked tools; then the figures; then set-up and checks.
+
+The status message stays at the top of the window as the page scrolls, so the result of
+pressing a button far down the page is always in view. It keeps its line when empty, so
+nothing jumps.
+
+Fields sit in a grid of columns at least 14rem wide: two side by side on a desk, one
+above the other on a phone. A field's label sits above it. Buttons follow their fields
+in a row that wraps. A table too wide for a phone scrolls sideways inside its own box;
+the page itself never does.
 
 ## Elevation & Depth
 
-Flat. There are no shadows and no layers. Separation comes from the hairline above each
-section and the outline round each queue item.
+Flat. There are no shadows and no layers. Separation comes from hairlines and from the
+slightly lighter surface of controls and queue items.
 
 ## Shapes
 
-Square by default. The one rounded form is the queue item (0.4rem corners), which marks
-it as a thing to be decided, apart from the page's standing sections. Buttons and
-fields keep the browser's own shape.
+Gently eased corners: controls at 0.375rem, the queue item at 0.5rem. Every control has
+a 1px edge. Buttons and fields share one height (2.75rem), which is also a comfortable
+target for a finger.
 
 ## Components
 
 ### Buttons
-- **Default:** the browser's own button, in the body typeface, with 0.5rem by 1rem of
-  padding and a 0.25rem gap.
-- **Stop:** Stop Red with On Stop text, no border, weight 600. There is one.
-- **Hover / Focus:** the browser's own. Nothing is added or removed.
-- A queue option's button is followed on the same line by muted text saying what it
-  does, and "Cannot be undone." or "Needs a reason." when that applies. The recommended
-  option says "(recommended)" in its label.
+- **Shape:** 0.375rem corners, 1px Control Edge, 2.75rem tall.
+- **Default:** Surface ground, Ink text.
+- **Stop:** Stop Red ground, On Stop text, weight 600. There is one.
+- **Hover / Active:** the ground steps to Hover, then Pressed. Stop steps to its
+  pressed red.
+- **Focus:** a 2px Ink ring, 2px clear of the control. The same ring on every control.
+- **Disabled:** dimmed, with the ordinary pointer. Every button is disabled while a
+  request is on its way, so nothing is sent twice.
 
 ### Queue item
-- **Corner Style:** 0.4rem.
-- **Border:** 1px, Item Border. No fill, no shadow.
-- **Internal Padding:** 0.5rem by 0.75rem, with 0.75rem between items.
-- Holds what happened, a reason field, the options with their effects, and why one is
-  recommended.
+- **Corner Style:** 0.5rem.
+- **Background:** Surface, with a 1px Hairline outline. No shadow.
+- **Internal Padding:** 1rem.
+- Holds what happened, a reason field, the options and why one is recommended. Each
+  option is a row: its button on the left at a fixed width, and what it does beside it
+  as a note. On a phone the note drops under its button.
 
 ### Inputs / Fields
-- **Style:** the browser's own text field and select, in the body typeface, 0.4rem of
-  padding.
-- **Focus:** the browser's own.
-- A field's label is plain text wrapped round it.
+- **Style:** Surface ground, 1px Control Edge, 0.375rem corners, 2.75rem tall, with a
+  Label above.
+- **Focus:** the shared ring.
+- **Placeholder:** Quiet Ink at full strength.
+
+### Tables
+- For figures. Headings are Labels in Quiet Ink; each row ends in a hairline.
+- The first column holds the name and takes the spare width; numbers are set to the
+  right.
+- A row that needs a remark carries it as a note under its name.
+- A table with nothing in it is one quiet line saying so, with no headings.
 
 ### Status message
-- One line under the title, weight 600, announced politely to assistive technology. It
-  turns Stop Red when it reports a failure. It always reserves its line, so the page
-  does not jump.
+- One line under the summary, weight 600, announced politely to assistive technology.
+  It turns red when it reports a failure.
 
 ### Lists
-- Plain bulleted lists for figures, paused projects, blocked tools and proposals. An
-  empty list shows one muted line saying so.
+- Plain bulleted lists for paused projects, blocked tools and proposals. An empty list
+  shows one quiet line saying so.
 
 ## Do's and Don'ts
 
 ### Do:
 - **Do** write every value into the page as text, never as markup.
+- **Do** style with classes only. The content policy refuses a style written on an
+  element.
 - **Do** keep the page self-contained: one style block and one script, both under the
   response's nonce, calling only the console's own addresses.
 - **Do** say next to each control what it does, in plain words.
@@ -174,4 +249,5 @@ fields keep the browser's own shape.
 - **Don't** load a font, image, icon set, script or stylesheet from anywhere else. Tests
   fail the build if the page reaches outside.
 - **Don't** use Stop Red for anything but stopping and failure.
+- **Don't** lower secondary text by making it see-through. Use Quiet Ink.
 - **Don't** add a build step or a framework for this page without the owner's say.
