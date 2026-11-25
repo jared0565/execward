@@ -15,6 +15,7 @@ import { RUN_LIMITS, SCRIPT_LIMITS } from "../limits";
 import { checkScript } from "../static-check/check";
 import type { AuditLog } from "../audit/log";
 import type { MeterFactory, MeterRecord, RunMeter } from "../meter/meter";
+import type { NetSavingEntry } from "../meter/net-saving";
 import { metricFor, type MetricsSink } from "../metrics/metrics";
 import type { AttemptGate } from "./attempts";
 import { releaseGate, type GateCheck } from "./release-gate";
@@ -108,6 +109,11 @@ export interface CodeToolDeps {
    * fixed check and came with criteria. Left out, a released result is `unreviewed`.
    */
   readonly review?: (input: ReviewInput) => Promise<ReviewVerdict>;
+  /**
+   * Told each metered run's figures and what verifying it used, for the net
+   * saving (task 2.2.5). Failing, it loses the figure and nothing else.
+   */
+  readonly netSaving?: (entry: NetSavingEntry) => Promise<void>;
 }
 
 /** What a model is told when a result is held. Fixed words: nothing a script wrote. */
@@ -666,6 +672,10 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     returned: output.status === "completed" ? output.result : output.status === "error" ? output.error.message : "",
   });
   if (metered) meterRecords.set(output, metered);
+  if (metered && deps.netSaving) {
+    const used = reviewed?.usage;
+    await deps.netSaving({ record: metered, ...(used ? { verification: { inputTokens: used.inputTokens, outputTokens: used.outputTokens } } : {}) }).catch(() => undefined);
+  }
   // The outcome is on record before anyone is told it.
   const kept = {
     ...(faultDetail === undefined ? {} : { faultDetail }),

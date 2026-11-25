@@ -39,6 +39,7 @@ import type { AttemptGate } from "../code-tool/attempts";
 import { escalationQueue, triggerFor } from "../console/escalations";
 import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1SettingsSeenStore, type StateDatabase } from "../storage/d1-stores";
 import { productionReviewer } from "../verify/production";
+import { quotaNetSavingStore } from "../meter/net-saving";
 import { switchNotices } from "./switch-notice";
 import { mcpAdapter, MCP_PATH } from "./adapter";
 
@@ -135,6 +136,8 @@ export async function productionService(env: McpEnv, now: () => number, labels: 
     newRunId: () => crypto.randomUUID(),
     // FR-48: the reviewer, on its own key, host list and budget. With no key stored it is refused
     // before anything is sent, and results stay `unreviewed`.
+    // The net saving after verification, by kind of run, for the owner's console (task 2.2.5).
+    netSaving: (entry) => quotaNetSavingStore(d1QuotaStore(db)).add(entry, now()),
     // While the daily check has the reviewer switched off (task 2.2.4), it is not asked either.
     review: (input) => productionReviewer({ key: () => env.VERIFY_OPENAI_API_KEY, quotas: d1QuotaStore(db), now }).forRuns.review(input),
     // FR-43: a critical figure that does not match goes to the owner's queue, and the result is held.

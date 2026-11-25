@@ -73,7 +73,18 @@ const loadQueue = async () => {
   try { const response = await fetch("/console/queue"); const body = await response.json().catch(() => ({})); if (response.ok) showQueue(body); else say(body.message || "The queue could not be read.", true); }
   catch { say("The queue could not be reached.", true); }
 };
-const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } loadQueue(); };
+const KINDS = { bounded_tool_heavy: "Runs that called tools", exploratory: "Runs that looked for tools first", no_tools: "Runs that used no tool" };
+const showSaving = (saving) => {
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  $("savingPeriod").textContent = "From " + day(saving.periodStart) + " to " + day(saving.periodEnd) + ".";
+  list("saving", saving.lines.filter((line) => line.runs > 0).map((line) =>
+    (line.flagged ? "NEGATIVE. " : "") + (KINDS[line.kind] || line.kind) + ": " + line.runs + " runs, " + line.verifiedRuns + " verified. Estimated saving " + line.estimatedSavingTokens + " tokens, verification used " + line.verificationTokens + ", net " + line.netSavingTokens + "." + (line.advice ? " " + line.advice : "")), "No run has been counted in this period.");
+};
+const loadSaving = async () => {
+  try { const response = await fetch("/console/saving"); const body = await response.json().catch(() => ({})); if (response.ok && body.saving) showSaving(body.saving); else list("saving", [], "The figures could not be read."); }
+  catch { list("saving", [], "The figures could not be read."); }
+};
+const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } loadQueue(); loadSaving(); };
 const act = async (body, done) => {
   say("Working...");
   try {
@@ -123,6 +134,13 @@ export function consolePage(nonce: string): string {
 <h2>Proposed rules</h2>
 <ul id="proposals"></ul>
 <p class="muted">A choice you have made several times is listed here as a proposal. Nothing is adopted by itself.</p>
+</section>
+
+<section>
+<h2>Net saving after verification</h2>
+<p id="savingPeriod" class="muted"></p>
+<ul id="saving"><li class="muted">Loading...</li></ul>
+<p class="muted">The saving is an estimate from a rough rule of one token per four bytes. Verification tokens are the provider's own count. A kind of run marked NEGATIVE uses more tokens than it saves.</p>
 </section>
 
 <section>

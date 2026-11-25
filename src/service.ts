@@ -46,6 +46,8 @@ export interface CodeToolServiceDeps {
   readonly onCrossCheckDisagreement?: CodeToolDeps["onCrossCheckDisagreement"];
   /** The independent reviewer (FR-48). Without it a released result is `unreviewed`. */
   readonly review?: CodeToolDeps["review"];
+  /** Keeps the net saving after verification (task 2.2.5). */
+  readonly netSaving?: CodeToolDeps["netSaving"];
   /** Only tests pass this. Production uses `CLIENT_DATA_GATE`. */
   readonly gate?: Gate;
   /** Only the adversarial suite passes this, to set the caps a case then tries to pass. Production uses `RUN_LIMITS`. */
@@ -121,6 +123,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       ...(deps.limits ? { limits: deps.limits } : {}),
       ...(deps.onCrossCheckDisagreement ? { onCrossCheckDisagreement: deps.onCrossCheckDisagreement } : {}),
       ...(deps.review ? { review: deps.review } : {}),
+      ...(deps.netSaving ? { netSaving: deps.netSaving } : {}),
       control: runGate(deps.control),
       exposure,
       admission: {
