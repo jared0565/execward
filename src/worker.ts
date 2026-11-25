@@ -19,10 +19,11 @@ import { bindingMailer } from "./console/mailer";
 import { CONTRACT_VERSION } from "./contracts/version";
 import { EXECWARD_VERSION } from "./index";
 import { MCP_PATH } from "./mcp/adapter";
+import { quotaNetSavingStore } from "./meter/net-saving";
 import { githubWriteCheck } from "./connectors/github-write-check";
 import { githubTokenFor, MCP_HOST, mcpResponse } from "./mcp/production";
 import { outboundFetch } from "./net/outbound";
-import { d1ControlStore, d1EscalationStore, type StateDatabase } from "./storage/d1-stores";
+import { d1ControlStore, d1EscalationStore, d1QuotaStore, type StateDatabase } from "./storage/d1-stores";
 import type { Env } from "./worker/bindings";
 import { runScheduled, type ScheduledEnv } from "./worker/scheduled";
 
@@ -61,7 +62,7 @@ export async function handle(request: Request, env: Env, access: AccessContext |
     await audit.record({ kind: "console_change", runId: "none", project: "-", body: { action: "github_write_check", by: principal.kind === "owner" ? principal.id : principal.kind, repository: `${owner}/${repo}`, ...result } });
     return result;
   };
-  return (await consoleResponse(request, { console: console_, queue, ...(mailer === undefined ? {} : { mailer }), githubWriteCheck: writeCheck, principal, nonce })) ?? handleRequest(request);
+  return (await consoleResponse(request, { console: console_, queue, ...(mailer === undefined ? {} : { mailer }), githubWriteCheck: writeCheck, netSaving: () => quotaNetSavingStore(d1QuotaStore(db)).report(now()), principal, nonce })) ?? handleRequest(request);
 }
 
 export default {

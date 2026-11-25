@@ -124,7 +124,7 @@ describe("the code the production Worker loads (task 1.1.6, FR-24)", () => {
     const page = readFileSync("src/console/page.ts", "utf8");
     const calls = [...page.matchAll(/fetch\(([^,)]*)/g)].map((match) => match[1]);
     expect(calls.length).toBeGreaterThan(0);
-    for (const target of calls) expect(target).toMatch(/^"\/console\/(?:state|action|queue)"$/);
+    for (const target of calls) expect(target).toMatch(/^"\/console\/(?:state|action|queue|saving)"$/);
     // Nothing else in it reaches out, and it imports nothing.
     expect(page).not.toMatch(/https?:\/\/|WebSocket|EventSource|XMLHttpRequest|sendBeacon|\bimport\b/);
   });

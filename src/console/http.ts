@@ -8,6 +8,7 @@
  * anywhere else.
  */
 import { repositoryName, type WriteCheckResult } from "../connectors/github-write-check";
+import type { NetSavingReport } from "../meter/net-saving";
 import { ConsoleAccessError, ConsoleChangeError, type OwnerConsole, type Principal } from "./console";
 import type { ControlState } from "./control";
 import type { EscalationItem, EscalationQueue } from "./escalations";
@@ -69,6 +70,8 @@ export interface ConsoleHttpDeps {
   readonly mailer?: Mailer;
   /** Tries one write with the GitHub credential, which GitHub must refuse (task 2.1.10). */
   readonly githubWriteCheck?: (owner: string, repo: string) => Promise<WriteCheckResult>;
+  /** The net saving after verification, by kind of run (task 2.2.5). Without it the console has no saving address. */
+  readonly netSaving?: () => Promise<NetSavingReport>;
   readonly principal: Principal;
   /** A fresh random value per response, for the page's one script and one style block. */
   readonly nonce: () => string;
@@ -172,6 +175,11 @@ export async function consoleResponse(request: Request, deps: ConsoleHttpDeps): 
     if (path === `${CONSOLE_PATH}/queue` && request.method === "GET" && deps.queue !== undefined) {
       const items = await deps.queue.list(deps.principal);
       return json({ items: items.map(queueItemView), proposals: await deps.queue.proposals(deps.principal) });
+    }
+    if (path === `${CONSOLE_PATH}/saving` && request.method === "GET" && deps.netSaving !== undefined) {
+      // The gate comes first, as for the page: the figures are the owner's.
+      await deps.console.state(deps.principal);
+      return json({ saving: await deps.netSaving() });
     }
     if (path === `${CONSOLE_PATH}/action` && request.method === "POST") {
       // Who is asking is settled before anything the request carries is read.
