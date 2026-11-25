@@ -54,6 +54,7 @@ const showQueue = (body) => {
     card.append(el("strong", (item.urgent ? "URGENT: " : "") + item.trigger.replaceAll("_", " ") + " in project " + item.project));
     card.append(el("p", "Raised " + when(item.createdAt) + (item.expiresAt ? ". Closes by itself " + when(item.expiresAt) : "") + (item.toolPath ? ". Tool: " + item.toolPath : "") + (item.errorCode ? ". Code: " + item.errorCode : "") + "."));
     card.append(el("p", "Already done to keep things safe: " + item.safeAction));
+    for (const figure of item.figures || []) card.append(el("p", "Figure " + figure.name + ", the " + figure.op + " of " + figure.rows + " numbers: the script said " + figure.declared + " and the server got " + figure.recomputed + (figure.agrees ? ". They agree." : ". They differ.")));
     if (item.acknowledgedAt) card.append(el("p", "You chose to keep it this way on " + when(item.acknowledgedAt) + ". It stays here until you choose something that closes it."));
     const reason = el("input"); reason.maxLength = 200; reason.size = 40; reason.placeholder = "Reason (needed for some choices)";
     card.append(reason, el("br"));

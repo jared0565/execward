@@ -18,6 +18,7 @@ import type { MeterFactory, MeterRecord, RunMeter } from "../meter/meter";
 import { metricFor, type MetricsSink } from "../metrics/metrics";
 import type { AttemptGate } from "./attempts";
 import { releaseGate, type GateCheck } from "./release-gate";
+import { crossCheck, type CheckedFigure } from "../verify/cross-check";
 
 /**
  * The script's way out for one run. A host that refuses a call on security
@@ -90,7 +91,22 @@ export interface CodeToolDeps {
     admit(run: { readonly runId: string; readonly project: string; readonly wallClockMs: number }): Promise<ExecWardError | undefined>;
     release(run: { readonly runId: string; readonly project: string }): Promise<void>;
   };
+  /**
+   * Told when a critical figure a script declared does not match the host's own
+   * working (FR-43). It puts the matter in the owner's queue and returns the
+   * item's ID. Left out, or failing, the result is still withheld: as an error.
+   */
+  readonly onCrossCheckDisagreement?: (held: {
+    readonly runId: string;
+    readonly project: string;
+    readonly report: RunReport;
+    readonly figures: readonly CheckedFigure[];
+  }) => Promise<string>;
 }
+
+/** What a model is told when a result is held. Fixed words: nothing a script wrote. */
+export const HELD_NOTICE =
+  "A critical figure in this result did not match an independent recomputation, so the result is held for the owner to review. Do not run the script again to get round this; tell the user the result is waiting for the owner.";
 
 /** What is returned in place of content that was withheld (FR-36). */
 export function maskNotice(read: DataClass, allowed: DataClass): { masked: true; notice: string } {
@@ -286,6 +302,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   let verification: RunReport["verification"] = "not_applicable";
   let gateChecks: readonly GateCheck[] | undefined;
   let criteria: RunReport["criteria"];
+  let crossChecks: RunReport["crossChecks"];
   const report = (errors: readonly ExecWardError[], assertionFailed = false): RunReport => ({
     runId,
     scriptHash,
@@ -299,6 +316,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     assertions: { passed: assertionsPassed, failed: assertionFailed ? 1 : 0 },
     sideEffects: [],
     ...(criteria ? { criteria } : {}),
+    ...(crossChecks ? { crossChecks } : {}),
     verification,
     // On Cloudflare the clock stands still while a script computes, so this is the time spent
     // waiting on calls and is too low for a script that mostly computes. It decides nothing.
@@ -444,6 +462,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   // Kept for the audit log only: what a fault said, and a count withheld from a masked reply.
   let faultDetail: string | undefined;
   let assertionsWithheld: number | undefined;
+  let checkedFigures: readonly CheckedFigure[] | undefined;
   try {
     const host = deps.hostFor({ runId, project: input.data.project });
     runMeter = deps.meter?.start({ runId, project: input.data.project });
@@ -480,6 +499,48 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
       // FR-17: a run ended by a switch says which side-effecting calls it had already made.
       const ending: ExecWardError = securityError.code === "code_mode_off" ? { ...securityError, message: `${securityError.message}. ${sideEffectsMade([])}` } : securityError;
       output = { status: "error", error: ending, report: report([ending]) };
+    } else if (outcome.status === "completed" && outcome.critical !== undefined) {
+      // FR-43: the script declared critical figures. Each is worked out again here, from the
+      // numbers it gave, before anything is handed over.
+      const check = crossCheck(outcome.critical);
+      if (!check.ok) {
+        // A declaration that cannot be checked is never treated as an agreement. The model can fix it.
+        const error: ExecWardError = {
+          code: "script_error",
+          message: masked && read !== undefined ? `a critical figure could not be checked; the detail is withheld because the run read ${read} data` : `a critical figure could not be checked: ${check.problem}`,
+        };
+        output = { status: "error", error, ...logs, ...hygiene, report: report([error]) };
+      } else {
+        checkedFigures = check.figures;
+        const disagreed = check.figures.filter((figure) => !figure.agrees).length;
+        // A script chooses how many figures it declares, so the counts are withheld with the content.
+        if (!masked) crossChecks = { agreed: check.figures.length - disagreed, disagreed };
+        if (disagreed === 0) {
+          output = {
+            status: "completed",
+            result: masked && read !== undefined ? maskNotice(read, allowed) : outcome.truncated ? truncationNotice(outcome.result, limits.maxResultBytes) : outcome.result,
+            truncated: masked ? false : outcome.truncated,
+            ...logs,
+            ...hygiene,
+            report: report([]),
+          };
+        } else {
+          // Disagreement: the result is held, and the owner is asked. Nothing the script wrote goes back.
+          let escalationId: string | undefined;
+          try {
+            escalationId = await deps.onCrossCheckDisagreement?.({ runId, project: input.data.project, report: report([]), figures: check.figures });
+          } catch {
+            escalationId = undefined;
+          }
+          if (typeof escalationId === "string" && escalationId !== "") {
+            output = { status: "paused", escalation_id: escalationId, report: report([]), notices: [HELD_NOTICE] };
+          } else {
+            // No queue to hold it in. It is withheld all the same.
+            const error: ExecWardError = { code: "assertion_failed", message: "a critical figure did not match an independent recomputation, so the result is withheld" };
+            output = { status: "error", error, report: report([error]) };
+          }
+        }
+      }
     } else if (outcome.status === "completed") {
       output = {
         status: "completed",
@@ -565,6 +626,11 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   });
   if (metered) meterRecords.set(output, metered);
   // The outcome is on record before anyone is told it.
-  const kept = { ...(faultDetail === undefined ? {} : { faultDetail }), ...(assertionsWithheld === undefined ? {} : { assertionsPassedWithheld: assertionsWithheld }) };
+  const kept = {
+    ...(faultDetail === undefined ? {} : { faultDetail }),
+    ...(assertionsWithheld === undefined ? {} : { assertionsPassedWithheld: assertionsWithheld }),
+    // Both values of every declared figure, for the owner's record. The reply carries only counts.
+    ...(checkedFigures === undefined ? {} : { crossCheck: checkedFigures }),
+  };
   return (await finish(output, { ...hygieneFacts, ...kept, ...(gateChecks ? { releaseGate: gateChecks } : {}) })) ? output : unrecorded();
 }

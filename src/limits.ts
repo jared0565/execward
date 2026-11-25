@@ -60,6 +60,14 @@ export const SELF_CORRECTION = {
   maxRetries: 2,
 } as const;
 
+/** Limits on the critical figures one run may declare for the cross-check (FR-43). */
+export const CROSS_CHECK_LIMITS = {
+  maxFigures: 20,
+  /** Across every figure in the run. */
+  maxRows: 20_000,
+  maxNameChars: 100,
+} as const;
+
 /** How long the audit log keeps things (FR-21, flag 5). */
 export const RETENTION = {
   /** Scripts, arguments and other full text. */

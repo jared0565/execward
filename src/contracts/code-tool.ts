@@ -65,6 +65,16 @@ export const runReportSchema = z.strictObject({
       items: z.array(z.string()),
     })
     .optional(),
+  /**
+   * Critical figures the script declared and the host worked out again (contract
+   * 1.7.0, FR-43). Absent when none was declared, or when content was withheld.
+   */
+  crossChecks: z
+    .strictObject({
+      agreed: z.number().int().nonnegative(),
+      disagreed: z.number().int().nonnegative(),
+    })
+    .optional(),
   /** Time waiting on calls. It leaves out most of the time a script spends computing. */
   durationMs: z.number().nonnegative(),
 });

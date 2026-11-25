@@ -130,6 +130,13 @@ export async function productionService(env: McpEnv, now: () => number, labels: 
     metrics: logMetricsSink(),
     now,
     newRunId: () => crypto.randomUUID(),
+    // FR-43: a critical figure that does not match goes to the owner's queue, and the result is held.
+    async onCrossCheckDisagreement(held) {
+      const queue = escalationQueue({ store: d1EscalationStore(db), control: d1ControlStore(db), audit: auditLog(d1AuditStore(db), now), now, newId: () => crypto.randomUUID() });
+      // The server's own working is the deterministic result the menu's recommendation asks about.
+      const item = await queue.raise({ trigger: "cross_check_disagreement", project: held.project, runId: held.runId, report: held.report, figures: held.figures, context: { deterministicResultExists: true } });
+      return item.id;
+    },
   });
 }
 

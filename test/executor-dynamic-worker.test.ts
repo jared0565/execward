@@ -54,6 +54,29 @@ describe("the Dynamic Worker executor, in the local Workers runtime", { timeout:
     ]);
   });
 
+  it("writes down a critical figure with its rows, and hands the value back to the script (FR-43)", async () => {
+    const reply = await run(`const rows = [1, 2, 3.5];
+const total = critical("invoice total", rows.reduce((a, b) => a + b, 0), { op: "sum", rows });
+rows.push(99);
+return total;`);
+    // The rows are copied when declared: changing the list afterwards changes nothing.
+    expect(reply.outcome).toEqual({ status: "completed", result: 6.5, logs: [], truncated: false, assertionsPassed: 0, critical: [{ name: "invoice total", value: 6.5, op: "sum", rows: [1, 2, 3.5] }] });
+  });
+
+  it.each([
+    ["a name that is not text", `critical(7, 1, { op: "sum", rows: [1] })`, "name"],
+    ["a value that is not a number", `critical("x", "1", { op: "sum", rows: [1] })`, "value"],
+    ["an unknown calculation", `critical("x", 1, { op: "median", rows: [1] })`, "op must be"],
+    ["no basis", `critical("x", 1)`, "op must be"],
+    ["rows that are not a list", `critical("x", 1, { op: "sum", rows: 1 })`, "rows must be"],
+    ["a row that is not a number", `critical("x", 1, { op: "sum", rows: [1, "2"] })`, "row 1"],
+    ["the average of no rows", `critical("x", 0, { op: "average", rows: [] })`, "no average"],
+  ])("refuses critical() with %s, as an error the script's author can read", async (_label, call, words) => {
+    const reply = await run(`return ${call};`);
+    expect(failure(reply)).toMatchObject({ kind: "script_error", line: 1 });
+    expect(failure(reply).message).toContain(words);
+  });
+
   it("offers search, describe, assert and console", async () => {
     const reply = await run(`const found = await search("echo");\nconst docs = await describe(found[0]);\nassert(docs.description, "no description");\nconsole.log("found", found);\nreturn docs.path;`);
     expect(reply.outcome).toEqual({ status: "completed", result: "test_echo", logs: ['found ["test_echo"]'], truncated: false, assertionsPassed: 1 });

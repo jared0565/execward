@@ -16,7 +16,7 @@ import type { AttemptGate } from "./code-tool/attempts";
 import { callGate, runGate, type ControlStore } from "./console/control";
 import type { MeterFactory } from "./meter/meter";
 import type { MetricsSink } from "./metrics/metrics";
-import { runCodeTool } from "./code-tool/run";
+import { runCodeTool, type CodeToolDeps } from "./code-tool/run";
 import type { CodeToolOutput } from "./contracts/code-tool";
 import type { PolicyRecord } from "./contracts/policy";
 import type { ExecutionLimits, Executor } from "./executor";
@@ -39,6 +39,11 @@ export interface CodeToolServiceDeps {
   readonly control: ControlStore;
   readonly now: () => number;
   readonly newRunId: () => string;
+  /**
+   * Puts a cross-check disagreement in the owner's queue and returns the item's ID (FR-43).
+   * Without it a disagreeing result is still withheld, as an error.
+   */
+  readonly onCrossCheckDisagreement?: CodeToolDeps["onCrossCheckDisagreement"];
   /** Only tests pass this. Production uses `CLIENT_DATA_GATE`. */
   readonly gate?: Gate;
   /** Only the adversarial suite passes this, to set the caps a case then tries to pass. Production uses `RUN_LIMITS`. */
@@ -112,6 +117,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       meter: deps.meter,
       metrics: deps.metrics,
       ...(deps.limits ? { limits: deps.limits } : {}),
+      ...(deps.onCrossCheckDisagreement ? { onCrossCheckDisagreement: deps.onCrossCheckDisagreement } : {}),
       control: runGate(deps.control),
       exposure,
       admission: {

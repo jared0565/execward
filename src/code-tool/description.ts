@@ -21,6 +21,7 @@ export const CODE_TOOL_DESCRIPTION = [
   "- `await describe('tool_name')`: takes one tool name and returns its argument and result types.",
   "- `await tools.<name>(args)`: call a tool. A failed call throws; use try/catch if you can recover.",
   "- `assert(condition, message)`: stop the run if something you rely on is false.",
+  "- `critical(name, n, { op: 'sum', rows })`: recheck a money or client total.",
   "- `console.log(...)`: notes returned with the result.",
   "One script may search, describe and call. Fewer, fuller scripts cost less than many small ones.",
   "",
