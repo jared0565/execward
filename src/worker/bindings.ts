@@ -86,6 +86,7 @@ export const ALLOWED_SETTINGS = {
  * so that everyone else can be refused (tasks 1.6.1 and 2.1.2). The last three
  * are the GitHub App: its private key is the one real credential here, and it
  * can only read the repositories the owner installed the App on (task 1.1.2).
+ * After them, the key verification's own model calls use (task 2.2.1).
  * A secret not named here fails the deployed check.
  */
 export const ALLOWED_SECRETS: readonly string[] = [
@@ -100,6 +101,8 @@ export const ALLOWED_SECRETS: readonly string[] = [
   "GITHUB_APP_INSTALLATION_ID",
   /** The GitHub App's private key. It mints read-only tokens that last about an hour. */
   "GITHUB_APP_PRIVATE_KEY",
+  /** A model provider key used only by verification, under its own budget (src/verify/model-access.ts). */
+  "VERIFY_OPENAI_API_KEY",
 ];
 
 /** The Worker's environment as the platform supplies it. Typed fully in task 1.2. */
@@ -114,4 +117,5 @@ export interface Env {
   readonly GITHUB_APP_ID?: string;
   readonly GITHUB_APP_INSTALLATION_ID?: string;
   readonly GITHUB_APP_PRIVATE_KEY?: string;
+  readonly VERIFY_OPENAI_API_KEY?: string;
 }
