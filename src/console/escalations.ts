@@ -14,6 +14,7 @@ import type { AuditLog } from "../audit/log";
 import type { Escalation } from "../code-tool/attempts";
 import type { RunReport } from "../contracts/code-tool";
 import type { ExecWardError } from "../contracts/errors";
+import type { CheckedFigure } from "../verify/cross-check";
 import { changeControl, ConsoleChangeError, requireOwner, type Principal } from "./console";
 import type { ControlStore } from "./control";
 
@@ -162,6 +163,8 @@ export interface EscalationItem {
   readonly error?: ExecWardError;
   readonly report?: RunReport;
   readonly context: EscalationContext;
+  /** For a cross-check disagreement: every figure the run declared, with both values (FR-43). */
+  readonly figures?: readonly CheckedFigure[];
   readonly options: readonly EscalationOption[];
   readonly recommended: { readonly optionId: string; readonly rule: string };
   readonly safeAction: string;
@@ -200,6 +203,7 @@ export interface RaiseInput {
   readonly error?: ExecWardError;
   readonly report?: RunReport;
   readonly context?: EscalationContext;
+  readonly figures?: readonly CheckedFigure[];
 }
 
 export interface EscalationQueue {
@@ -259,6 +263,7 @@ export function escalationQueue(deps: EscalationDeps): EscalationQueue {
         ...(input.runId === undefined ? {} : { runId: input.runId }),
         ...(input.error === undefined ? {} : { error: input.error }),
         ...(input.report === undefined ? {} : { report: input.report }),
+        ...(input.figures === undefined ? {} : { figures: input.figures }),
         context,
         options: spec.options,
         recommended: spec.recommend(context),

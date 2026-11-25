@@ -84,7 +84,8 @@ export function mcpAdapter(deps: { readonly service: CodeToolService }): McpAdap
           // Read before the run, so the notice describes the settings this call met.
           const notices = (await caller.noticesFor?.(input.project).catch(() => [])) ?? [];
           const ran = await deps.service(input, { providerRoute: caller.providerRoute, attempts });
-          const output = notices.length === 0 ? ran : { ...ran, notices: [...notices] };
+          // A run may carry a notice of its own (a held result). Both are kept, within the contract's limit of eight.
+          const output = notices.length === 0 ? ran : { ...ran, notices: [...(ran.notices ?? []), ...notices].slice(0, 8) };
           return {
             content: [{ type: "text" as const, text: presentForModel(output) }],
             isError: output.status === "error" || output.status === "refused",

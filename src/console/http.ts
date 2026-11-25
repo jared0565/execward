@@ -36,6 +36,8 @@ export interface QueueItemView {
   readonly acknowledgedAt?: number;
   readonly errorCode?: string;
   readonly toolPath?: string;
+  /** For a cross-check disagreement: the figures, with what the script said and what the server got. */
+  readonly figures?: readonly { readonly name: string; readonly op: string; readonly rows: number; readonly declared: number; readonly recomputed: number; readonly agrees: boolean }[];
   readonly safeAction: string;
   readonly recommended: { readonly optionId: string; readonly rule: string };
   readonly options: readonly { readonly id: string; readonly label: string; readonly effect: string; readonly reversible: boolean; readonly needsReason: boolean }[];
@@ -52,6 +54,7 @@ export function queueItemView(item: EscalationItem): QueueItemView {
     ...(item.acknowledgedAt === undefined ? {} : { acknowledgedAt: item.acknowledgedAt }),
     ...(item.error === undefined ? {} : { errorCode: item.error.code }),
     ...(item.context.toolPath === undefined ? {} : { toolPath: item.context.toolPath }),
+    ...(item.figures === undefined ? {} : { figures: item.figures.map((figure) => ({ name: figure.name, op: figure.op, rows: figure.rows, declared: figure.declared, recomputed: figure.recomputed, agrees: figure.agrees })) }),
     safeAction: item.safeAction,
     recommended: item.recommended,
     options: item.options.map((option) => ({ id: option.id, label: option.label, effect: option.effect, reversible: option.reversible, needsReason: option.needsReason === true })),

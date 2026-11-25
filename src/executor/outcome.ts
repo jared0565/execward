@@ -8,6 +8,10 @@
 import type { ExecutionFailureKind, ExecutionLimits, ExecutionOutcome } from "../executor";
 
 export const MAX_LOG_LINES = 200;
+/** The largest declaration of critical figures read from a sandbox's report. */
+export const MAX_DECLARATION_CHARS = 1_000_000;
+/** Stands in for a declaration that could not be read. The cross-check refuses it. */
+export const UNREADABLE_DECLARATION = "unreadable";
 export const TRUNCATED_LOGS_NOTICE = "[further log output was dropped]";
 
 function byteLength(text: string): number {
@@ -89,12 +93,26 @@ export function interpretReport(report: unknown, limits: ExecutionLimits): Execu
     return fault("the sandbox returned a report in an unknown shape", logs);
   }
 
+  // FR-43: what the script declared as critical. Passed on as it came, for the core to check.
+  // If it cannot even be read, that is passed on too: a declaration is never dropped in silence.
+  let critical: { critical?: unknown } = {};
+  if (report.criticalJson !== undefined) {
+    critical = { critical: UNREADABLE_DECLARATION };
+    if (typeof report.criticalJson === "string" && report.criticalJson.length <= MAX_DECLARATION_CHARS) {
+      try {
+        critical = { critical: JSON.parse(report.criticalJson) as unknown };
+      } catch {
+        // Left as unreadable.
+      }
+    }
+  }
+
   if (byteLength(report.resultJson) > limits.maxResultBytes) {
     // FR-5: an oversized final value is cut, and says so. Task 1.2.4 shapes the notice the model sees.
-    return { status: "completed", result: cutToBytes(report.resultJson, limits.maxResultBytes), logs, truncated: true, ...passed };
+    return { status: "completed", result: cutToBytes(report.resultJson, limits.maxResultBytes), logs, truncated: true, ...passed, ...critical };
   }
   try {
-    return { status: "completed", result: JSON.parse(report.resultJson) as unknown, logs, truncated: false, ...passed };
+    return { status: "completed", result: JSON.parse(report.resultJson) as unknown, logs, truncated: false, ...passed, ...critical };
   } catch {
     return fault("the sandbox returned a result that is not JSON", logs);
   }

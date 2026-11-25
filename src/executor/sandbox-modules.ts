@@ -6,6 +6,7 @@
  */
 import { parse } from "acorn";
 import { LANGUAGE_BUILTINS, SANDBOX_GLOBALS } from "../contracts/sandbox-api";
+import { CROSS_CHECK_LIMITS } from "../limits";
 
 export const RUNNER_MODULE = "runner.js";
 export const SCRIPT_MODULE = "script.js";
@@ -58,7 +59,7 @@ export function buildSandboxModules(script: string): SandboxModules {
     ok: true,
     modules: {
       // SCRIPT_LINE_OFFSET counts the one line before the script here.
-      [SCRIPT_MODULE]: `export default async function (tools, search, describe, assert, console) {\n${script}\n}\n`,
+      [SCRIPT_MODULE]: `export default async function (tools, search, describe, assert, critical, console) {\n${script}\n}\n`,
       [RUNNER_MODULE]: RUNNER_SOURCE,
     },
   };
@@ -164,6 +165,29 @@ export class Code extends WorkerEntrypoint {
       if (!failedAssertion) failedAssertion = { error, value: format(condition).slice(0, 200) };
       throw error;
     };
+    // FR-43: a critical figure is only written down here. The host works it out again
+    // after the run; nothing in this isolate is trusted to do that.
+    const declared = [];
+    let declaredRows = 0;
+    const critical = (name, value, basis) => {
+      if (typeof name !== "string" || name === "" || name.length > ${CROSS_CHECK_LIMITS.maxNameChars}) throw new TypeError("critical(): the name must be text of 1 to ${CROSS_CHECK_LIMITS.maxNameChars} characters");
+      if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError("critical(): the value must be a number");
+      const op = basis && basis.op;
+      const rows = basis && basis.rows;
+      if (op !== "sum" && op !== "count" && op !== "min" && op !== "max" && op !== "average") throw new TypeError("critical(): op must be 'sum', 'count', 'min', 'max' or 'average'");
+      if (!Array.isArray(rows)) throw new TypeError("critical(): rows must be the list of numbers the value was worked out from");
+      const copy = [];
+      for (let i = 0; i < rows.length; i++) {
+        if (typeof rows[i] !== "number" || !Number.isFinite(rows[i])) throw new TypeError("critical(): every row must be a number, and row " + i + " is not");
+        copy.push(rows[i]);
+      }
+      if ((op === "min" || op === "max" || op === "average") && copy.length === 0) throw new TypeError("critical(): there is no " + op + " of no rows");
+      if (declared.length >= ${CROSS_CHECK_LIMITS.maxFigures}) throw new TypeError("critical(): at most ${CROSS_CHECK_LIMITS.maxFigures} figures may be declared in one run");
+      if (declaredRows + copy.length > ${CROSS_CHECK_LIMITS.maxRows}) throw new TypeError("critical(): at most ${CROSS_CHECK_LIMITS.maxRows} rows may be declared in one run");
+      declaredRows += copy.length;
+      declared.push({ name, value, op, rows: copy });
+      return value;
+    };
     const assertionReport = () => ({
       status: "failed",
       kind: "assertion_failed",
@@ -178,7 +202,7 @@ export class Code extends WorkerEntrypoint {
     // A global that could not be hidden means the allowed set is not what was promised. Do not run.
     if (globalsLeft.length > 0) return { status: "failed", kind: "script_error", message: "not run", assertionsPassed: 0, logs: [], globalsLeft: globalsLeft.slice(0, 20) };
     try {
-      const value = await script(tools, search, describe, assert, console);
+      const value = await script(tools, search, describe, assert, critical, console);
       // A script that caught its own failed assertion still failed it.
       if (failedAssertion) return assertionReport();
       let resultJson;
@@ -190,7 +214,11 @@ export class Code extends WorkerEntrypoint {
       if (resultJson === undefined) resultJson = "null";
       // One character over is enough for the host to see that it was cut.
       if (resultJson.length > maxChars + 1) resultJson = resultJson.slice(0, maxChars + 1);
-      return { status: "completed", resultJson, assertionsPassed, logs, globalsLeft };
+      if (declared.length === 0) return { status: "completed", resultJson, assertionsPassed, logs, globalsLeft };
+      let criticalJson;
+      try { criticalJson = JSON.stringify(declared); } catch { criticalJson = null; }
+      // Not text: the host then treats the declaration as unreadable, which is never an agreement.
+      return { status: "completed", resultJson, assertionsPassed, logs, globalsLeft, criticalJson: typeof criticalJson === "string" ? criticalJson : null };
     } catch (error) {
       if (failedAssertion) return assertionReport();
       return {

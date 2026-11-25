@@ -89,6 +89,11 @@ export type ExecutionOutcome =
       readonly truncated: boolean;
       /** `assert()` calls that passed, when the sandbox counts them (FR-40). */
       readonly assertionsPassed?: number;
+      /**
+       * What the script declared with `critical()`, as it came out of the sandbox (FR-43).
+       * Untrusted and unchecked: the core checks it. Absent when nothing was declared.
+       */
+      readonly critical?: unknown;
     }
   | {
       readonly status: "failed";

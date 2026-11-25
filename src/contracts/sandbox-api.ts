@@ -5,11 +5,12 @@
  *   search(query)                 find tools without loading the catalog (FR-3)
  *   describe(path)                typed docs for one tool path (FR-3)
  *   assert(condition, message)    end the run when a condition is false (FR-40)
+ *   critical(name, value, basis)  declare a critical figure for the cross-check (FR-43)
  *   console.log(...)              captured and returned as logs
  */
 
 /** The names ExecWard gives a script. */
-export const SANDBOX_GLOBALS = ["tools", "search", "describe", "assert", "console"] as const;
+export const SANDBOX_GLOBALS = ["tools", "search", "describe", "assert", "critical", "console"] as const;
 export type SandboxGlobal = (typeof SANDBOX_GLOBALS)[number];
 
 /**
@@ -90,5 +91,7 @@ export interface SandboxScope {
   search(query: string): Promise<unknown>;
   describe(path: string): Promise<unknown>;
   assert(condition: unknown, message?: string): asserts condition;
+  /** Returns `value`. The host works the figure out again from `rows` after the run. */
+  critical(name: string, value: number, basis: { readonly op: "sum" | "count" | "min" | "max" | "average"; readonly rows: readonly number[] }): number;
   readonly console: { log(...values: unknown[]): void };
 }
