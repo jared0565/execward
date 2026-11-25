@@ -106,7 +106,8 @@ describe("the suite against the stub (task 0.3.2)", () => {
       controls: controls.length,
       controlsServed: controls.length,
     });
-  });
+    // It starts a whole Node process. On a busy machine that alone has taken longer than the default five seconds.
+  }, 30_000);
 
   it("runs in CI on every change, with no path filter (task 0.3.3)", () => {
     const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
