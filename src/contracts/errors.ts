@@ -83,6 +83,11 @@ export const ERROR_CODES = {
     security: true,
     meaning: "Tool output or arguments carried a prompt-injection signal.",
   },
+  review_blocked: {
+    retryable: true,
+    security: false,
+    meaning: "The independent reviewer found that the result does not meet the criteria the caller set.",
+  },
 } as const satisfies Record<string, ErrorCodeSpec>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

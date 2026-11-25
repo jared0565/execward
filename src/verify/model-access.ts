@@ -46,10 +46,16 @@ export interface ModelPrice {
 
 /**
  * The models verification may use, each with the price its spend is counted at.
- * Empty: no model is approved until one is chosen on measured figures (tasks
- * 2.2.2 and 2.2.3), so until then no call can be made.
+ * A model not listed here cannot be called.
+ *
+ * `gpt-6-luna`: the owner's choice for the reviewer, 2026-11-25, as the cheapest
+ * current model. $0.10 a million input tokens and $0.50 a million output tokens,
+ * standard processing, as OpenAI's pricing page listed it that day. The page was
+ * read by a web-reading agent, not by a person: check it when the first bill arrives.
  */
-export const VERIFICATION_MODELS: Readonly<Record<string, ModelPrice>> = {};
+export const VERIFICATION_MODELS: Readonly<Record<string, ModelPrice>> = {
+  "gpt-6-luna": { usdPerMillionInputTokens: 0.1, usdPerMillionOutputTokens: 0.5 },
+};
 
 export const VERIFICATION_LIMITS = {
   maxOutputTokens: 16_000,
@@ -57,6 +63,8 @@ export const VERIFICATION_LIMITS = {
   maxRequestBytes: 256 * 1024,
   /** The largest reply read. A larger one is refused, not cut. */
   maxReplyBytes: 1024 * 1024,
+  /** How long a request may take before it is given up. */
+  timeoutMs: 20_000,
 } as const;
 
 export type VerificationPurpose = "cross_check" | "reviewer" | "golden_task";
@@ -260,6 +268,8 @@ export function verificationAccess(deps: VerificationDeps): VerificationAccess {
           method: "POST",
           headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
           body,
+          // A provider that does not answer must not hold a run open.
+          signal: AbortSignal.timeout(VERIFICATION_LIMITS.timeoutMs),
         });
       } catch {
         // The error's own text can hold the request. It is not passed on.

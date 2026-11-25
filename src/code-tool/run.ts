@@ -19,6 +19,7 @@ import { metricFor, type MetricsSink } from "../metrics/metrics";
 import type { AttemptGate } from "./attempts";
 import { releaseGate, type GateCheck } from "./release-gate";
 import { crossCheck, type CheckedFigure } from "../verify/cross-check";
+import type { ReviewInput, ReviewVerdict } from "../verify/reviewer";
 
 /**
  * The script's way out for one run. A host that refuses a call on security
@@ -102,6 +103,11 @@ export interface CodeToolDeps {
     readonly report: RunReport;
     readonly figures: readonly CheckedFigure[];
   }) => Promise<string>;
+  /**
+   * The independent reviewer (FR-48). Asked only about a result that passed every
+   * fixed check and came with criteria. Left out, a released result is `unreviewed`.
+   */
+  readonly review?: (input: ReviewInput) => Promise<ReviewVerdict>;
 }
 
 /** What a model is told when a result is held. Fixed words: nothing a script wrote. */
@@ -463,6 +469,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   let faultDetail: string | undefined;
   let assertionsWithheld: number | undefined;
   let checkedFigures: readonly CheckedFigure[] | undefined;
+  let reviewed: ReviewVerdict | undefined;
   try {
     const host = deps.hostFor({ runId, project: input.data.project });
     runMeter = deps.meter?.start({ runId, project: input.data.project });
@@ -587,9 +594,41 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
       verification = "failed";
       output = { status: "error", error: verdict.failure, report: report([verdict.failure], output.report.assertions.failed > 0) };
     } else if (output.status === "completed") {
-      // No independent reviewer exists yet (FR-48), so a released result is never called passed.
+      // Released after the fixed checks. Only a reviewer's pass makes it `passed` (FR-48).
       verification = "unreviewed";
-      output = { ...output, report: { ...output.report, verification } };
+      // The reviewer judges against criteria, so without them there is nothing to ask. A withheld
+      // result is not sent to it either: there is nothing in it to judge.
+      if (deps.review && criteria && !masked) {
+        try {
+          reviewed = await deps.review({
+            runId,
+            project: input.data.project,
+            ...(input.data.intent === undefined ? {} : { intent: input.data.intent }),
+            criteria: criteria.items,
+            output: output.result,
+            report: output.report,
+            dataClass: read ?? "public",
+            deterministicCheckPassed: true,
+            tier: 0,
+          });
+        } catch {
+          // A reviewer that breaks is a missing reviewer: the result stays unreviewed.
+          reviewed = undefined;
+        }
+      }
+      if (reviewed?.outcome === "blocked") {
+        // The reviewer's own words are not passed on: only which criteria, by number.
+        verification = "failed";
+        const unmet = reviewed.unmet ?? [];
+        const error: ExecWardError = {
+          code: "review_blocked",
+          message: `the independent reviewer found that the result does not meet ${unmet.length === 1 ? "criterion" : "criteria"} ${unmet.join(", ")}, so it is withheld`,
+        };
+        output = { status: "error", error, ...hygiene, report: report([error]) };
+      } else {
+        if (reviewed?.outcome === "passed") verification = "passed";
+        output = { ...output, report: { ...output.report, verification } };
+      }
     }
   } catch (cause) {
     // An executor must not throw; if one does, that is a sandbox fault. Nothing is run another way.
@@ -631,6 +670,8 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     ...(assertionsWithheld === undefined ? {} : { assertionsPassedWithheld: assertionsWithheld }),
     // Both values of every declared figure, for the owner's record. The reply carries only counts.
     ...(checkedFigures === undefined ? {} : { crossCheck: checkedFigures }),
+    // The reviewer's verdict, why there was none, and what the call cost.
+    ...(reviewed === undefined ? {} : { review: reviewed }),
   };
   return (await finish(output, { ...hygieneFacts, ...kept, ...(gateChecks ? { releaseGate: gateChecks } : {}) })) ? output : unrecorded();
 }
