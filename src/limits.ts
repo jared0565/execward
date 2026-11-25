@@ -68,7 +68,16 @@ export const RETENTION = {
   recordDays: 90,
 } as const;
 
-/** Spend caps on the platform itself. Model spend is capped separately (FR-51). */
+/**
+ * Spend on verification's own model calls, for the whole installation (FR-51).
+ * The owner's decision of 2026-11-25. Enforced in src/verify/model-access.ts.
+ */
+export const VERIFICATION_BUDGET = {
+  usdPerDay: 1,
+  usdPerMonth: 10,
+} as const;
+
+/** Spend caps on the platform itself. Model spend is capped separately, above. */
 export const SPEND_CAPS = {
   /** Cloudflare's price for one Dynamic Worker beyond the included 1,000 a month. */
   usdPerRun: 0.002,
