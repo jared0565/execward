@@ -4,7 +4,8 @@
  * The timer fires every five minutes. Every firing does the frequent round:
  * close escalations past their time limit. The first firing of a UTC day that
  * finds no backup for that day also does the daily round: apply retention to
- * the audit log, sweep old counters, then back the database up.
+ * the audit log, check the reviewer model against known answers (task 2.2.4),
+ * sweep old counters, then back the database up.
  *
  * The day's backup is the marker that the daily round is done. If it fails,
  * the next firing tries again, so a missed or failed round mends itself
@@ -19,7 +20,9 @@ import { escalationQueue } from "../console/escalations";
 import { bindingMailer, CONSOLE_URL } from "../console/mailer";
 import { notifier } from "../console/notify";
 import { runMaintenance, type JobResult } from "../maintenance";
-import { d1ControlStore, d1EscalationStore, sweepQuotaCounters, type StateDatabase } from "../storage/d1-stores";
+import { d1ControlStore, d1EscalationStore, d1QuotaStore, sweepQuotaCounters, type StateDatabase } from "../storage/d1-stores";
+import { runGoldenCheck } from "../verify/golden";
+import { productionReviewer } from "../verify/production";
 
 /** How often the timer fires. Must match the schedule in wrangler.jsonc. */
 export const SCHEDULE_MS = 5 * 60 * 1000;
@@ -30,6 +33,8 @@ export interface ScheduledEnv {
   /** The email binding and the owner's address. Without both, nothing is sent and the jobs are skipped. */
   readonly EMAIL?: unknown;
   readonly OWNER_EMAIL?: string;
+  /** Verification's key. Without it the daily check of the reviewer finds it cannot ask, and counts nothing. */
+  readonly VERIFY_OPENAI_API_KEY?: string;
 }
 
 export interface ScheduledResult {
@@ -39,7 +44,7 @@ export interface ScheduledResult {
   readonly backup?: BackupResult | { readonly error: string };
 }
 
-export async function runScheduled(env: ScheduledEnv, now: number, newId: () => string = () => crypto.randomUUID()): Promise<ScheduledResult> {
+export async function runScheduled(env: ScheduledEnv, now: number, newId: () => string = () => crypto.randomUUID(), outbound?: typeof fetch): Promise<ScheduledResult> {
   const db = env.DB as StateDatabase & AuditDatabase & BackupDatabase;
   const audit = d1AuditStore(db);
   const log = auditLog(audit, () => now);
@@ -52,6 +57,11 @@ export async function runScheduled(env: ScheduledEnv, now: number, newId: () => 
     escalations,
     ...(mailer === undefined ? {} : { notifier: notifier({ mailer, baseUrl: CONSOLE_URL, tickMs: SCHEDULE_MS }) }),
     sweepCounters: (at: number) => sweepQuotaCounters(db, at),
+    // FR-45: the reviewer model is given its known-answer cases, at most once a day.
+    checkReviewer: () => {
+      const reviewing = productionReviewer({ key: () => env.VERIFY_OPENAI_API_KEY, quotas: d1QuotaStore(db), now: () => now, ...(outbound ? { fetch: outbound } : {}) });
+      return runGoldenCheck({ reviewer: reviewing.forTheCheck, store: reviewing.golden, queue, audit: log, now: () => now });
+    },
     now: () => now,
   };
 

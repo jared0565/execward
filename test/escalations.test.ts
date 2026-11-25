@@ -44,7 +44,7 @@ describe("the options menu (FR-46)", () => {
   const triggers = Object.keys(ESCALATION_MENU) as Trigger[];
 
   it("offers at most four options per trigger, each saying what it does and whether it can be undone", () => {
-    expect(triggers.sort()).toEqual(["cross_check_disagreement", "definition_changed", "repeated_failure", "security_exception", "tier2_action", "unusual_values"]);
+    expect(triggers.sort()).toEqual(["cross_check_disagreement", "definition_changed", "repeated_failure", "reviewer_check_failed", "security_exception", "tier2_action", "unusual_values"]);
     for (const trigger of triggers) {
       const { options } = ESCALATION_MENU[trigger];
       expect(options.length, trigger).toBeGreaterThanOrEqual(3);
@@ -62,6 +62,7 @@ describe("the options menu (FR-46)", () => {
       ["cross_check_disagreement", "discard_both"],
       ["definition_changed", "block"],
       ["repeated_failure", "stop"],
+      ["reviewer_check_failed", "leave_off"],
       ["security_exception", "keep_paused"],
       ["tier2_action", "reject"],
       ["unusual_values", "reject_result"],
@@ -100,6 +101,7 @@ describe("the options menu (FR-46)", () => {
       ["cross_check_disagreement", 24 * HOUR],
       ["definition_changed", null],
       ["repeated_failure", 4 * HOUR],
+      ["reviewer_check_failed", 24 * HOUR],
       ["security_exception", null],
       ["tier2_action", 24 * HOUR],
       ["unusual_values", 24 * HOUR],

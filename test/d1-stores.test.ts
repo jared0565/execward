@@ -312,11 +312,13 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
   it("does the daily round once a day, at the first firing, and only the frequent round after that", async () => {
     const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000, MORNING + 10 * 60_000, MORNING + DAY] });
     expect(reply.runs.map((run) => run.daily !== undefined)).toEqual([true, false, false, true]);
-    expect(reply.runs[0]?.daily?.map((job) => job.job)).toEqual(["apply_retention", "sweep_counters"]);
+    expect(reply.runs[0]?.daily?.map((job) => job.job)).toEqual(["apply_retention", "check_reviewer", "sweep_counters"]);
+    // No verification key in this Worker: the reviewer could not be asked, so the check counted nothing.
+    expect(reply.runs[0]?.daily?.find((job) => job.job === "check_reviewer")).toMatchObject({ ok: true, detail: "the reviewer could not be asked in 5 of 5 cases; nothing counted" });
     expect(reply.runs[0]?.backup).toMatchObject({ key: "backups/2027-01-15.json" });
     expect(reply.keys).toEqual(["backups/2027-01-15.json", "backups/2027-01-16.json"]);
-    // Each daily round is recorded. A frequent round that did nothing is not.
-    expect(reply.kinds).toEqual(["maintenance", "maintenance"]);
+    // Each daily round is recorded, and so is each day's check of the reviewer. A frequent round that did nothing is not.
+    expect(reply.kinds).toEqual(["reviewer_check", "maintenance", "reviewer_check", "maintenance"]);
     expect(reply.chain).toMatchObject({ ok: true });
   });
 
@@ -334,7 +336,8 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
     const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000], brokenBucket: true });
     expect(reply.runs.map((run) => run.backup)).toEqual([{ error: "the bucket refused the write" }, { error: "the bucket refused the write" }]);
     expect(reply.keys).toEqual([]);
-    expect(reply.kinds).toEqual(["maintenance", "maintenance"]);
+    // The daily round is done twice; the check of the reviewer inside it is still done once that day.
+    expect(reply.kinds).toEqual(["reviewer_check", "maintenance", "maintenance"]);
   });
 });
 
