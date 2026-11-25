@@ -294,6 +294,20 @@ describe("the reviewer in the run path", () => {
     expect(asked[0]?.dataClass).toBe("internal");
   });
 
+  it("counts the wait for the reviewer in the run's reported time", async () => {
+    let clock = 1_000;
+    const { deps } = setup();
+    const output = await runCodeTool(CALL, {
+      ...deps,
+      now: () => clock,
+      review: async () => {
+        clock += 3_000;
+        return { outcome: "passed" };
+      },
+    });
+    expect(output).toMatchObject({ status: "completed", report: { verification: "passed", durationMs: 3_000 } });
+  });
+
   it("records the verdict in the audit log", async () => {
     const { deps, store } = setup({ verdict: { outcome: "blocked", unmet: [1] } });
     await runCodeTool(CALL, deps);

@@ -627,7 +627,9 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
         output = { status: "error", error, ...hygiene, report: report([error]) };
       } else {
         if (reviewed?.outcome === "passed") verification = "passed";
-        output = { ...output, report: { ...output.report, verification } };
+        // The report was drawn up before the reviewer was asked. Its time must include the wait for the
+        // reviewer. (Seen on production, 2026-11-25: a reviewed run reported 148 ms and took 3.4 seconds.)
+        output = { ...output, report: { ...output.report, verification, ...(reviewed === undefined ? {} : { durationMs: Math.max(0, deps.now() - started) }) } };
       }
     }
   } catch (cause) {
