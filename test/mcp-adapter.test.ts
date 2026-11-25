@@ -2,6 +2,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { describe, expect, it } from "vitest";
 import { attemptGate } from "../src/code-tool/attempts";
 import { CODE_TOOL_DESCRIPTION } from "../src/code-tool/description";
+import { BOTH_DOORS_GUIDANCE, directCallScript } from "../src/code-tool/direct";
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../src/code-tool/present";
 import type { CodeToolOutput } from "../src/contracts/code-tool";
 import { CONTRACT_VERSION } from "../src/contracts/version";
@@ -65,6 +66,88 @@ async function rpcResult(response: Response): Promise<Record<string, unknown>> {
     : text;
   return JSON.parse(json) as Record<string, unknown>;
 }
+
+describe("direct tools beside the code tool (task 2.1.9)", () => {
+  const TOOL = {
+    path: "github_get_repository",
+    description: "Get a repository.",
+    inputSchema: { type: "object", properties: { project: { type: "string" }, owner: { type: "string" }, repo: { type: "string" } }, required: ["project", "owner", "repo"], additionalProperties: false },
+  };
+  function both() {
+    const seen: { input: unknown; caller: CallerContext }[] = [];
+    const adapter = mcpAdapter({
+      service: async (input, caller) => {
+        seen.push({ input, caller });
+        return { status: "completed", result: { name: "billing-api" }, truncated: false, untrusted: true, report: REPORT };
+      },
+    });
+    return { seen, fetch_: (request: Request) => adapter.serve(request, { providerRoute: "unknown", directTools: [TOOL] }) };
+  }
+
+  it("lists them after `code`, and tells the model which door suits which work", async () => {
+    const { fetch_ } = both();
+    const client = await connect(fetch_);
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name)).toEqual(["code", "github_get_repository"]);
+    expect(tools[0]?.description).toBe(`${CODE_TOOL_DESCRIPTION}\n\n${BOTH_DOORS_GUIDANCE}`);
+    expect(tools[1]?.inputSchema).toEqual(TOOL.inputSchema);
+    await client.close();
+  });
+
+  it("runs a direct call as a one-line script through the same service", async () => {
+    const { fetch_, seen } = both();
+    const client = await connect(fetch_);
+    const result = await client.callTool({ name: "github_get_repository", arguments: { project: "work", owner: "northwind-labs", repo: "billing-api" } });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.input).toEqual({
+      script: directCallScript("github_get_repository", { owner: "northwind-labs", repo: "billing-api" }),
+      project: "work",
+      intent: "A direct call to github_get_repository.",
+    });
+    expect(seen[0]?.caller.providerRoute).toBe("unknown");
+    expect(result.isError).toBeFalsy();
+    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    expect(text).toContain(UNTRUSTED_OPEN);
+    expect(text).toContain("billing-api");
+    await client.close();
+  });
+
+  it("refuses a direct call with no project, and runs nothing", async () => {
+    const { fetch_, seen } = both();
+    const response = await post(fetch_, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "github_get_repository", arguments: { owner: "a", repo: "b" } } }, { "mcp-protocol-version": "2025-06-18" });
+    const reply = await rpcResult(response);
+    expect(JSON.stringify(reply)).toContain("give the project");
+    expect((reply.result as { isError?: boolean }).isError).toBe(true);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("counts a direct call against the caller's retry limit, like a script", async () => {
+    const projects: string[] = [];
+    const adapter = mcpAdapter({ service: async () => ({ status: "completed", result: 1, truncated: false, untrusted: true, report: REPORT }) });
+    const fetch_ = (request: Request) =>
+      adapter.serve(request, {
+        providerRoute: "unknown",
+        directTools: [TOOL],
+        attemptsFor: async (project) => {
+          projects.push(project);
+          return attemptGate();
+        },
+      });
+    const client = await connect(fetch_);
+    await client.callTool({ name: "github_get_repository", arguments: { project: "work", owner: "a", repo: "b" } });
+    expect(projects).toEqual(["work"]);
+    await client.close();
+  });
+
+  it("cannot be used to replace the code tool", async () => {
+    const adapter = mcpAdapter({ service: async () => ({ status: "completed", result: 1, truncated: false, untrusted: true, report: REPORT }) });
+    const client = await connect((request) => adapter.serve(request, { providerRoute: "unknown", directTools: [{ ...TOOL, path: "code" }] }));
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name)).toEqual(["code"]);
+    expect(tools[0]?.description).toBe(CODE_TOOL_DESCRIPTION);
+    await client.close();
+  });
+});
 
 describe("the MCP adapter (task 2.1.1, FR-10)", () => {
   it("offers one tool, `code`, with ExecWard's description and its input contract", async () => {

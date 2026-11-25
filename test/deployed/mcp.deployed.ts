@@ -43,6 +43,34 @@ describe("the MCP adapter on Cloudflare (task 2.1.1)", { timeout: 120_000 }, () 
     await client.close();
   });
 
+  it("lists the looking-around tools beside `code` for a client that says it runs Claude Haiku (task 2.1.9)", async () => {
+    const client = await connect({ ...AUTH, "x-execward-model": "claude-haiku-5-5" });
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name)).toEqual(["code", "github_get_file_contents", "github_get_repository", "github_list_branches", "github_search_code"]);
+    expect(tools[0]?.description).toContain("can be called directly");
+    await client.close();
+  });
+
+  it("runs a direct call in the sandbox, under the same checks, and returns it inside the untrusted block (task 2.1.9)", async () => {
+    const client = await connect({ ...AUTH, "x-execward-model": "claude-haiku-5-5" });
+    const result = await client.callTool({ name: "github_get_repository", arguments: { project: "eval", owner: "northwind-labs", repo: "web-dashboard" } });
+    expect(result.isError).toBeFalsy();
+    expect(text(result)).toContain("<untrusted_tool_output>");
+    expect(text(result)).toContain("web-dashboard");
+    // Wrong arguments are refused by the broker's own check of the pinned schema, as in a script.
+    const wrong = await client.callTool({ name: "github_get_repository", arguments: { project: "eval", owner: "northwind-labs", repo: "web-dashboard", perPage: 5 } });
+    expect(text(wrong)).toContain("schema_invalid");
+    await client.close();
+  });
+
+  it("refuses a direct call for a client that did not ask for them (task 2.1.9)", async () => {
+    const client = await connect();
+    const result = await client.callTool({ name: "github_get_repository", arguments: { project: "eval", owner: "northwind-labs", repo: "web-dashboard" } }).catch((error: unknown) => ({ isError: true, content: [{ text: String(error) }] }));
+    expect(result.isError).toBe(true);
+    expect(text(result)).not.toContain("web-dashboard");
+    await client.close();
+  });
+
   it("runs a script that calls a tool, and returns the answer inside the untrusted block", async () => {
     const client = await connect();
     const result = await client.callTool({

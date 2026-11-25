@@ -33,6 +33,8 @@ import { meter, memoryMeterSink } from "../../src/meter/meter";
 import { logMetricsSink } from "../../src/metrics/metrics";
 import { codeToolService } from "../../src/service";
 import { mcpAdapter, MCP_PATH } from "../../src/mcp/adapter";
+import { providerCeiling } from "../../src/broker/exposure";
+import { directTools, wantsDirectTools } from "../../src/code-tool/direct";
 import { runScheduled } from "../../src/worker/scheduled";
 import { runCodeTool, type RunHost } from "../../src/code-tool/run";
 import { dynamicWorkerExecutor, type WorkerLoader } from "../../src/executor/dynamic-worker";
@@ -338,8 +340,14 @@ export default {
       // Failed runs in a row are counted in the database, per project, as production counts them (task 2.1.5).
       const { service } = await databaseService(env);
       const attempts = d1AttemptStore(env.DB as unknown as StateDatabase);
+      // The looking-around tools beside `code`, for a client that says it runs Claude Haiku (task 2.1.9).
+      const { pins: listedPins, records: listedRecords } = await fixture();
+      const listed = wantsDirectTools(request.headers.get("x-execward-model") ?? undefined)
+        ? directTools(listedRecords, (path) => listedPins.find((pin) => pin.path === path)?.definition, providerCeiling("anthropic_api_commercial"))
+        : [];
       return mcpAdapter({ service }).serve(request, {
         providerRoute: "anthropic_api_commercial",
+        ...(listed.length === 0 ? {} : { directTools: listed }),
         attemptsFor: (project) => storedAttemptGate({ store: attempts, now: () => Date.now() }, attemptKey("test-client", project)),
         noticesFor: (project) =>
           switchNotices(

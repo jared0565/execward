@@ -95,6 +95,7 @@ const ARM_NAMES: Readonly<Record<Arm, string>> = {
   direct: "direct",
   tool_search: "tool search",
   code: "code tool",
+  both: "code tool and direct calls",
 };
 const TYPE_NAMES: Readonly<Record<TaskType, string>> = {
   bounded_tool_heavy: "bounded tool-heavy",
