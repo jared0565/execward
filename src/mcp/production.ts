@@ -21,7 +21,10 @@
  * policy table on every call. See docs/decisions/2.1.2-cli-sign-in.md.
  */
 import { auditLog, d1AuditStore, type AuditDatabase } from "../audit/log";
+import { providerCeiling } from "../broker/exposure";
 import { d1PolicyStore, type D1Like } from "../broker/policy-store";
+import { directTools, wantsDirectTools, type DirectTool } from "../code-tool/direct";
+import type { PolicyRecord } from "../contracts/policy";
 import { githubPinsAndPolicy, githubUpstream } from "../connectors/github";
 import { githubAppToken, type GithubAppSettings } from "../connectors/github-app";
 import { principalFromAccess, type AccessContext } from "../console/access";
@@ -158,6 +161,25 @@ export function productionAttempts(env: McpEnv, callerId: string, now: () => num
     );
 }
 
+/**
+ * The looking-around tools to list beside `code`, for a client that says it runs a model
+ * the guard is for (task 2.1.9). For anyone else, and when the policy table cannot be
+ * read, none: the code tool is then the only tool, as before.
+ *
+ * The model's name is the client's own word. Saying "haiku" gains nothing a script could
+ * not already do: each direct call is run as a script, under the same checks.
+ */
+export async function productionDirectTools(model: string | undefined, records: () => Promise<readonly PolicyRecord[]>): Promise<readonly DirectTool[]> {
+  if (!wantsDirectTools(model)) return [];
+  try {
+    const { pins } = await githubPinsAndPolicy();
+    // The route is not known from sign-in, so the most cautious ceiling applies, as for a run.
+    return directTools(await records(), (path) => pins.find((pin) => pin.path === path)?.definition, providerCeiling("unknown"));
+  } catch {
+    return [];
+  }
+}
+
 function refused(status: number, error: string): Response {
   return Response.json({ error }, { status, headers: { "cache-control": "no-store" } });
 }
@@ -173,6 +195,8 @@ export async function mcpResponse(
   now: () => number,
   service?: CodeToolService,
   attemptsFor?: (callerId: string) => (project: string) => Promise<AttemptGate>,
+  /** Only tests pass this. Production reads the policy table. */
+  policyRecords?: () => Promise<readonly PolicyRecord[]>,
 ): Promise<Response> {
   if (new URL(request.url).pathname !== MCP_PATH) return refused(404, "not_found");
   // A web page must never be able to drive the tool with the owner's sign-in.
@@ -186,8 +210,11 @@ export async function mcpResponse(
   const db = env.DB as StateDatabase;
   const noticesFor =
     service === undefined ? (project: string) => switchNotices({ store: d1SettingsSeenStore(db), control: d1ControlStore(db), now }, attemptKey(principal.id, project), project) : undefined;
-  return mcpAdapter({ service: service ?? (await productionService(env, now, callerLabels(request))) }).serve(request, {
+  const labels = callerLabels(request);
+  const listed = await productionDirectTools(labels.model, policyRecords ?? (() => d1PolicyStore(env.DB as D1Like).list()));
+  return mcpAdapter({ service: service ?? (await productionService(env, now, labels)) }).serve(request, {
     providerRoute: "unknown",
+    ...(listed.length === 0 ? {} : { directTools: listed }),
     ...(attempts === undefined ? {} : { attemptsFor: attempts }),
     ...(noticesFor === undefined ? {} : { noticesFor }),
   });

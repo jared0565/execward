@@ -7,8 +7,9 @@
  * --cap   US dollars. Required, so that no run starts without a stated limit.
  * --runs  Times each task runs on each model. Default 1.
  * --out   Where to write one JSON line per attempt. Default eval-results/<time>.jsonl.
- * --arm   direct, tool_search or code. May be repeated. Default direct.
- *         code runs each script on the deployed test Worker; its address and test secret come
+ * --arm   direct, tool_search, code or both. May be repeated. Default direct.
+ *         both offers the code tool and the wrapped tools together (task 2.1.9).
+ *         code and both run each script on the deployed test Worker; its address and test secret come
  *         from EXECWARD_TEST_URL and EXECWARD_TEST_SECRET, or the files in the .execward folder
  *         in the home folder.
  * --direct-route  Skip OpenRouter and call each provider's own API.
@@ -27,6 +28,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { bothBackend } from "../src/eval/arms/both";
 import { codeBackend, remoteFixtureRunner, type CodeBackend, type CodeRunner } from "../src/eval/arms/code";
 import { toolSearchBackend } from "../src/eval/arms/tool-search";
 import { githubFixtureBackend } from "../src/eval/fixtures/github-backend";
@@ -72,10 +74,10 @@ async function main(): Promise<number> {
   const only = option("only");
   const arms = (option("arm").length === 0 ? ["direct"] : option("arm")) as Arm[];
   for (const arm of arms) {
-    if (arm !== "direct" && arm !== "tool_search" && arm !== "code") throw new Error(`Cannot start: unknown arm ${String(arm)}`);
+    if (arm !== "direct" && arm !== "tool_search" && arm !== "code" && arm !== "both") throw new Error(`Cannot start: unknown arm ${String(arm)}`);
   }
   let codeRunner: CodeRunner | undefined;
-  if (arms.includes("code")) {
+  if (arms.includes("code") || arms.includes("both")) {
     const setting = (name: string, file: string): string => {
       const fromEnv = process.env[name];
       if (fromEnv) return fromEnv.trim();
@@ -164,8 +166,9 @@ ${String(input.script)}
               return output;
             }
           : runner;
-      const code: CodeBackend | undefined = job.arm === "code" && shownRunner ? codeBackend(shownRunner) : undefined;
-      const armBackend = code ?? (job.arm === "tool_search" ? toolSearchBackend(backend) : backend);
+      const code: CodeBackend | undefined = (job.arm === "code" || job.arm === "both") && shownRunner ? codeBackend(shownRunner) : undefined;
+      const both = code && job.arm === "both" ? bothBackend(code, backend) : undefined;
+      const armBackend = both ?? code ?? (job.arm === "tool_search" ? toolSearchBackend(backend) : backend);
       const runBackend: ToolBackend = !showToolErrors
         ? armBackend
         : {
@@ -194,7 +197,7 @@ ${String(input.script)}
       for (const attempt of routed.attempts) {
         const cost = costUsd(job.target, attempt);
         spentUsd += cost;
-        appendFileSync(out, `${JSON.stringify({ target: job.target.name, run: job.run, costUsd: cost, ...attempt, answer: attempt === routed.record ? answer : null, ...(code && attempt === routed.record ? { codeRuns: code.outcomes } : {}) })}\n`);
+        appendFileSync(out, `${JSON.stringify({ target: job.target.name, run: job.run, costUsd: cost, ...attempt, answer: attempt === routed.record ? answer : null, ...(code && attempt === routed.record ? { codeRuns: code.outcomes } : {}), ...(both && attempt === routed.record ? { doors: both.doors } : {}) })}\n`);
       }
       results.push({ job, record: routed.record });
     }

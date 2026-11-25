@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AccessContext } from "../src/console/access";
 import type { CodeToolOutput } from "../src/contracts/code-tool";
+import type { PolicyRecord } from "../src/contracts/policy";
 import { callerLabels, MCP_HOST, mcpResponse } from "../src/mcp/production";
 import { memoryMeterSink, meter } from "../src/meter/meter";
 import type { CallerContext } from "../src/service";
@@ -52,6 +53,57 @@ function setup() {
   const ask = (request: Request, ctx: AccessContext | undefined, env: Env = ENV) => mcpResponse(request, env, ctx, () => NOW, service);
   return { seen, ask };
 }
+
+describe("direct tools for Claude Haiku on production (task 2.1.9)", () => {
+  const record = (tool: string, dataClass: "internal" | "confidential"): PolicyRecord => ({
+    server: "github",
+    tool,
+    definitionHash: "0".repeat(64),
+    callerRule: "both",
+    dataClass,
+    tier: 0,
+    sensitive: dataClass === "confidential",
+    outbound: false,
+    destinationAllowlist: [],
+    quotas: {},
+  });
+  const RECORDS = [record("get_repository", "internal"), record("list_branches", "internal"), record("list_issues", "internal"), record("get_file_contents", "confidential"), record("search_code", "confidential")];
+  const names = async (headers: Record<string, string>, records: () => Promise<readonly PolicyRecord[]> = async () => RECORDS): Promise<string[]> => {
+    const service = async (): Promise<CodeToolOutput> => ({ status: "completed", result: 1, truncated: false, untrusted: true, report: REPORT });
+    const response = await mcpResponse(list(headers), ENV, access(), () => NOW, service, undefined, records);
+    const text = await response.text();
+    const json = text.includes("data:") ? text.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("") : text;
+    return (JSON.parse(json) as { result: { tools: { name: string }[] } }).result.tools.map((tool) => tool.name);
+  };
+
+  it("lists the looking-around tools at or below the caller's level when the client says it runs Claude Haiku", async () => {
+    // The route is unknown, so the ceiling is internal: the tools that read file contents are not listed.
+    expect(await names({ "x-execward-model": "claude-haiku-5-5" })).toEqual(["code", "github_get_repository", "github_list_branches"]);
+  });
+
+  it("lists only `code` for any other model, and for a client that names none", async () => {
+    expect(await names({ "x-execward-model": "claude-fable-5-2" })).toEqual(["code"]);
+    expect(await names({ "x-execward-model": "gpt-6-luna" })).toEqual(["code"]);
+    expect(await names({})).toEqual(["code"]);
+  });
+
+  it("lists only `code` when the policy table cannot be read", async () => {
+    expect(
+      await names({ "x-execward-model": "claude-haiku-5-5" }, async () => {
+        throw new Error("the database is away");
+      }),
+    ).toEqual(["code"]);
+  });
+
+  it("lists nothing the owner has not approved", async () => {
+    expect(await names({ "x-execward-model": "claude-haiku-5-5" }, async () => [])).toEqual(["code"]);
+  });
+
+  it("does not sign anyone in: a Haiku header without Access is still refused", async () => {
+    const response = await mcpResponse(list({ "x-execward-model": "claude-haiku-5-5" }), ENV, undefined, () => NOW, undefined, undefined, async () => RECORDS);
+    expect(response.status).toBe(401);
+  });
+});
 
 describe("signing in to the MCP server (task 2.1.2, FR-25)", () => {
   it("serves the owner, signed in through the MCP address's own Access application", async () => {

@@ -95,7 +95,7 @@ export interface EvalTask {
 }
 
 /** Which way the model reached the tools. */
-export type Arm = "direct" | "tool_search" | "code";
+export type Arm = "direct" | "tool_search" | "code" | "both";
 
 export type FailureCause =
   | "wrong_answer"
