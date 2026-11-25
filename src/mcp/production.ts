@@ -38,8 +38,7 @@ import { attemptKey, storedAttemptGate } from "../code-tool/stored-attempts";
 import type { AttemptGate } from "../code-tool/attempts";
 import { escalationQueue, triggerFor } from "../console/escalations";
 import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1SettingsSeenStore, type StateDatabase } from "../storage/d1-stores";
-import { verificationAccess, VERIFICATION_HOSTS, type VerificationSink } from "../verify/model-access";
-import { reviewer } from "../verify/reviewer";
+import { productionReviewer } from "../verify/production";
 import { switchNotices } from "./switch-notice";
 import { mcpAdapter, MCP_PATH } from "./adapter";
 
@@ -80,13 +79,6 @@ const logMeterSink: MeterSink = {
     } catch {
       // A lost line never fails a run.
     }
-  },
-};
-
-/** Each verification call's measured usage, as its own line in the platform's log: never mixed into the meter's (FR-51). */
-const logVerificationSink: VerificationSink = {
-  async write(record) {
-    console.log({ event: "execward_verification", ...record });
   },
 };
 
@@ -143,10 +135,8 @@ export async function productionService(env: McpEnv, now: () => number, labels: 
     newRunId: () => crypto.randomUUID(),
     // FR-48: the reviewer, on its own key, host list and budget. With no key stored it is refused
     // before anything is sent, and results stay `unreviewed`.
-    review: (input) =>
-      reviewer({
-        access: verificationAccess({ credential: () => env.VERIFY_OPENAI_API_KEY, fetch: outboundFetch(VERIFICATION_HOSTS), quotas: d1QuotaStore(db), sink: logVerificationSink, now }),
-      }).review(input),
+    // While the daily check has the reviewer switched off (task 2.2.4), it is not asked either.
+    review: (input) => productionReviewer({ key: () => env.VERIFY_OPENAI_API_KEY, quotas: d1QuotaStore(db), now }).forRuns.review(input),
     // FR-43: a critical figure that does not match goes to the owner's queue, and the result is held.
     async onCrossCheckDisagreement(held) {
       const queue = escalationQueue({ store: d1EscalationStore(db), control: d1ControlStore(db), audit: auditLog(d1AuditStore(db), now), now, newId: () => crypto.randomUUID() });

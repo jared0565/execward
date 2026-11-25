@@ -52,7 +52,13 @@ export type ReviewOutcome =
   /** No verdict: nothing to judge against, or the reviewer could not be asked or understood. */
   | "unreviewed";
 
-export type UnreviewedReason = "no_criteria" | "reviewer_refused" | "reviewer_failed" | "unreadable_verdict";
+export type UnreviewedReason =
+  | "no_criteria"
+  | "reviewer_refused"
+  | "reviewer_failed"
+  | "unreadable_verdict"
+  /** The daily check found the reviewer model failing and switched it off (task 2.2.4). */
+  | "reviewer_off";
 
 export interface ReviewInput {
   readonly runId: string;

@@ -18,7 +18,7 @@ import type { CheckedFigure } from "../verify/cross-check";
 import { changeControl, ConsoleChangeError, requireOwner, type Principal } from "./console";
 import type { ControlStore } from "./control";
 
-export type Trigger = "security_exception" | "definition_changed" | "tier2_action" | "cross_check_disagreement" | "repeated_failure" | "unusual_values";
+export type Trigger = "security_exception" | "definition_changed" | "tier2_action" | "cross_check_disagreement" | "repeated_failure" | "unusual_values" | "reviewer_check_failed";
 
 export interface EscalationOption {
   readonly id: string;
@@ -149,6 +149,37 @@ export const ESCALATION_MENU: Readonly<Record<Trigger, TriggerSpec>> = {
     urgent: false,
     reminderEveryMs: null,
     recommend: () => ({ optionId: "rerun_cross_check", rule: "Re-run the cross-check." }),
+  },
+  // Not in the PRD's table: added with the daily check of the reviewer model (task 2.2.4, FR-45).
+  // The safe state needs nothing from the owner and mends itself. The other two options are
+  // recorded as the owner's wish and carried out by hand: nothing acts on them yet.
+  reviewer_check_failed: {
+    options: [
+      {
+        id: "leave_off",
+        label: "Leave the reviewer off until it passes again",
+        effect: "Nothing changes. Results are released as unreviewed. The reviewer is checked again each day and comes back by itself after a day that passes.",
+        reversible: true,
+      },
+      {
+        id: "other_model",
+        label: "Choose a different reviewer model",
+        effect: "The reviewer stays off. Your choice is recorded; setting up another model needs a change to the code, which is not automatic.",
+        reversible: true,
+      },
+      {
+        id: "back_on_now",
+        label: "Switch the reviewer back on before it passes",
+        effect: "Your choice is recorded. Switching it on is done by hand and is not automatic. Until then results stay unreviewed.",
+        reversible: true,
+        needsReason: true,
+      },
+    ],
+    safeAction: "Reviewer switched off",
+    expiresAfterMs: 24 * HOUR,
+    urgent: false,
+    reminderEveryMs: null,
+    recommend: () => ({ optionId: "leave_off", rule: "The reviewer model gave wrong verdicts on known cases two days running." }),
   },
 };
 
