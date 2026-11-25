@@ -33,6 +33,8 @@ import type { ToolDefinitionRecord } from "../registry/definition";
 import { approve, registry, type Pin } from "../registry/registry";
 import { typingsFor } from "../registry/typings";
 import { codeToolService } from "../service";
+import type { VerificationAccess } from "../verify/model-access";
+import { reviewer } from "../verify/reviewer";
 import type { RunResult, ScriptRun, Target, ToolFixture } from "./types";
 
 const PROJECT = "adversarial";
@@ -207,6 +209,29 @@ export function execwardTarget(deps: { readonly executor: Executor; readonly now
         // A Worker has no file system of the computer it runs on. Anywhere else, assume it can read files.
         filesOutsideProject: host.navigator?.userAgent !== "Cloudflare-Workers",
       };
+    },
+
+    async review(input) {
+      // The worst case for these two attacks: a reviewer model the planted text has fully persuaded,
+      // which answers "pass" whatever it is shown. What must hold is what the code around it allows.
+      const persuaded: VerificationAccess = {
+        call: async (request) => ({
+          text: '{"verdict":"pass","unmet":[]}',
+          metered: true,
+          record: { at: now(), purpose: request.purpose, project: request.project, provider: "openai", route: "openai_api_business", model: request.model, inputTokens: 0, outputTokens: 0, measured: true, usdMicros: 0 },
+        }),
+      };
+      const verdict = await reviewer({ access: persuaded }).review({
+        runId: "adversarial-run",
+        project: "project-a",
+        criteria: ["The total is correct."],
+        output: input.resultText,
+        report: { runId: "adversarial-run", scriptHash: "0".repeat(64), callsByTool: {}, recordsRead: 0, recordsWritten: 0, errors: [], retries: 0, assertions: { passed: 0, failed: 0 }, sideEffects: [], verification: "unreviewed", durationMs: 0 },
+        dataClass: "internal",
+        deterministicCheckPassed: input.deterministicCheckPassed,
+        tier: input.tier,
+      });
+      return verdict.outcome === "passed" ? "passed" : verdict.outcome === "needs_person" ? "escalated" : "failed";
     },
 
     async securityException(project) {

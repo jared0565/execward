@@ -44,6 +44,8 @@ export interface CodeToolServiceDeps {
    * Without it a disagreeing result is still withheld, as an error.
    */
   readonly onCrossCheckDisagreement?: CodeToolDeps["onCrossCheckDisagreement"];
+  /** The independent reviewer (FR-48). Without it a released result is `unreviewed`. */
+  readonly review?: CodeToolDeps["review"];
   /** Only tests pass this. Production uses `CLIENT_DATA_GATE`. */
   readonly gate?: Gate;
   /** Only the adversarial suite passes this, to set the caps a case then tries to pass. Production uses `RUN_LIMITS`. */
@@ -118,6 +120,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       metrics: deps.metrics,
       ...(deps.limits ? { limits: deps.limits } : {}),
       ...(deps.onCrossCheckDisagreement ? { onCrossCheckDisagreement: deps.onCrossCheckDisagreement } : {}),
+      ...(deps.review ? { review: deps.review } : {}),
       control: runGate(deps.control),
       exposure,
       admission: {

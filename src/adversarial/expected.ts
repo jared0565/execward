@@ -14,8 +14,6 @@ export const OPEN_UNTIL_LATER: Readonly<Record<string, { readonly task: string; 
   "approved-call-swapped": { task: "3.1.5", part: "approvals of tier-2 actions (Phase 3)" },
   "approval-from-model-tool": { task: "3.1.5", part: "approvals of tier-2 actions (Phase 3)" },
   "model-saves-script": { task: "4.1.1", part: "saved scripts (Phase 4)" },
-  "reviewer-overrules-deterministic-fail": { task: "2.2.3", part: "the independent reviewer (Phase 2)" },
-  "reviewer-approves-tier-2": { task: "2.2.3", part: "the independent reviewer (Phase 2)" },
 };
 
 /**

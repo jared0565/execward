@@ -134,8 +134,9 @@ describe("verification's model access (task 2.2.1, FR-51)", () => {
     await expect(outboundFetch(VERIFICATION_HOSTS, never)("https://api.github.com/")).rejects.toThrow("not sent");
   });
 
-  it("approves no model yet, so production can make no call until one is chosen", async () => {
-    expect(VERIFICATION_MODELS).toEqual({});
+  it("approves one model, at the price the owner was shown, and refuses any other", async () => {
+    // $0.10 a million input tokens and $0.50 a million output tokens: the owner's choice of 2026-11-25.
+    expect(VERIFICATION_MODELS).toEqual({ "gpt-6-luna": { usdPerMillionInputTokens: 0.1, usdPerMillionOutputTokens: 0.5 } });
     const sent: unknown[] = [];
     const access = verificationAccess({
       credential: () => KEY,
