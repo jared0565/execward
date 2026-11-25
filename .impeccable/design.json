@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-25T00:00:00.000Z",
+  "generatedAt": "2026-11-25T12:00:00.000Z",
   "title": "Design System: ExecWard",
   "extensions": {
     "colorMeta": {
@@ -8,21 +8,117 @@
         "role": "primary",
         "displayName": "Stop Red",
         "canonical": "#b00020",
-        "tonalRamp": ["#2d0008", "#560010", "#840018", "#b00020", "#cf3f55", "#e17e8c", "#efb6be", "#f9e3e6"]
+        "tonalRamp": [
+          "#2d0008",
+          "#560010",
+          "#840018",
+          "#b00020",
+          "#cf3f55",
+          "#e17e8c",
+          "#efb6be",
+          "#f9e3e6"
+        ]
       },
-      "on-stop": { "role": "neutral", "displayName": "On Stop", "canonical": "#ffffff" },
-      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "#8884" },
-      "item-border": { "role": "neutral", "displayName": "Item Border", "canonical": "#8886" }
+      "stop-red-pressed": {
+        "role": "primary",
+        "displayName": "Stop Red, Pressed",
+        "canonical": "#8f001a"
+      },
+      "failure-on-dark": {
+        "role": "primary",
+        "displayName": "Failure on Dark",
+        "canonical": "#ff8a98"
+      },
+      "on-stop": {
+        "role": "neutral",
+        "displayName": "On Stop",
+        "canonical": "#ffffff"
+      },
+      "page": {
+        "role": "neutral",
+        "displayName": "Page",
+        "canonical": "#fbfbfa",
+        "tonalRamp": [
+          "#131416",
+          "#1b1d20",
+          "#33363b",
+          "#5b6068",
+          "#8b9099",
+          "#d9dce0",
+          "#f0f1f2",
+          "#fbfbfa"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "#ffffff"
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#1a1c1e"
+      },
+      "quiet-ink": {
+        "role": "neutral",
+        "displayName": "Quiet Ink",
+        "canonical": "#5b6068"
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#d9dce0"
+      },
+      "control-edge": {
+        "role": "neutral",
+        "displayName": "Control Edge",
+        "canonical": "#8b9099"
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover",
+        "canonical": "#f0f1f2"
+      },
+      "pressed": {
+        "role": "neutral",
+        "displayName": "Pressed",
+        "canonical": "#e4e6e8"
+      }
     },
     "typographyMeta": {
-      "title": { "displayName": "Title", "purpose": "The page's one title." },
-      "headline": { "displayName": "Headline", "purpose": "The name of each section." },
-      "body": { "displayName": "Body", "purpose": "Everything else, including buttons and fields." },
-      "label": { "displayName": "Label", "purpose": "The status message and the stop button." }
+      "title": {
+        "displayName": "Title",
+        "purpose": "The page's one title."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The name of each section."
+      },
+      "subhead": {
+        "displayName": "Subhead",
+        "purpose": "A grouping inside a section."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Text, buttons and fields."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "The name above a field, and table headings."
+      },
+      "note": {
+        "displayName": "Note",
+        "purpose": "Short explanations and caveats, in Quiet Ink."
+      }
     },
     "shadows": [],
     "motion": [],
-    "breakpoints": []
+    "breakpoints": [
+      {
+        "name": "phone",
+        "value": "30rem"
+      }
+    ]
   },
   "components": [
     {
@@ -31,54 +127,69 @@
       "refersTo": "button-stop",
       "description": "Stops everything. There is one, and it is the only filled button.",
       "html": "<button class=\"ds-btn-stop\">Stop everything now</button>",
-      "css": ".ds-btn-stop { font: 600 16px/1.5 system-ui, sans-serif; padding: .5rem 1rem; margin: .25rem .25rem .25rem 0; cursor: pointer; background: #b00020; color: #fff; border: 0; }"
+      "css": ".ds-btn-stop { font: 1rem/1.5 system-ui, sans-serif; color: #1a1c1e; background: #ffffff; border: 1px solid #8b9099; border-radius: .375rem; min-height: 2.75rem; padding: .5rem .9rem; cursor: pointer; background: #b00020; border-color: #b00020; color: #fff; font-weight: 600; } .ds-btn-stop:hover, .ds-btn-stop:active { background: #8f001a; border-color: #8f001a; } .ds-btn-stop:focus-visible { outline: 2px solid #1a1c1e; outline-offset: 2px; }"
     },
     {
-      "name": "Default Button",
+      "name": "Button",
       "kind": "button",
-      "description": "Every other action. The browser's own button in the body typeface.",
+      "refersTo": "button",
+      "description": "Every other action.",
       "html": "<button class=\"ds-btn\">Clear the kill switch</button>",
-      "css": ".ds-btn { font: 16px/1.5 system-ui, sans-serif; padding: .5rem 1rem; margin: .25rem .25rem .25rem 0; cursor: pointer; }"
+      "css": ".ds-btn { font: 1rem/1.5 system-ui, sans-serif; color: #1a1c1e; background: #ffffff; border: 1px solid #8b9099; border-radius: .375rem; min-height: 2.75rem; padding: .5rem .9rem; cursor: pointer; } .ds-btn:hover { background: #f0f1f2; } .ds-btn:active { background: #e4e6e8; } .ds-btn:focus-visible { outline: 2px solid #1a1c1e; outline-offset: 2px; } .ds-btn:disabled { opacity: .55; cursor: default; }"
     },
     {
-      "name": "Text Field",
+      "name": "Field",
       "kind": "input",
-      "description": "The browser's own field, labelled by the plain text wrapped round it.",
-      "html": "<label class=\"ds-label\">Reason <input class=\"ds-input\" maxlength=\"200\" size=\"30\"></label>",
-      "css": ".ds-label { font: 16px/1.5 system-ui, sans-serif; } .ds-input { font: inherit; padding: .4rem; margin: .25rem .25rem .25rem 0; max-width: 100%; }"
+      "refersTo": "field",
+      "description": "A text field with its label above it.",
+      "html": "<label class=\"ds-label\">Reason <input class=\"ds-input\" maxlength=\"200\"></label>",
+      "css": ".ds-label { display: grid; gap: .25rem; font: 600 .875rem/1.5 system-ui, sans-serif; color: #1a1c1e; max-width: 22rem; } .ds-input { font: 1rem/1.5 system-ui, sans-serif; color: #1a1c1e; background: #ffffff; border: 1px solid #8b9099; border-radius: .375rem; min-height: 2.75rem; padding: .5rem .6rem; width: 100%; } .ds-input:focus-visible { outline: 2px solid #1a1c1e; outline-offset: 2px; }"
     },
     {
       "name": "Queue Item",
       "kind": "card",
       "refersTo": "queue-item",
       "description": "One thing waiting for the owner's decision, with its options and what each does.",
-      "html": "<div class=\"ds-item\"><strong>A critical figure did not match</strong><br><button class=\"ds-item-btn\">Discard both</button><span class=\"ds-muted\">Neither result is used.</span><p class=\"ds-muted\">Why that one is recommended: no deterministic result exists.</p></div>",
-      "css": ".ds-item { font: 16px/1.5 system-ui, sans-serif; border: 1px solid #8886; border-radius: .4rem; padding: .5rem .75rem; margin: .75rem 0; } .ds-item-btn { font: inherit; padding: .5rem 1rem; margin: .25rem .25rem .25rem 0; cursor: pointer; } .ds-muted { opacity: .7; }"
+      "html": "<div class=\"ds-item\"><strong>Cross check disagreement in project billing</strong><div class=\"ds-option\"><button class=\"ds-item-btn\">Discard both</button><span class=\"ds-note\">Neither result is used.</span></div><p class=\"ds-note\">Why that one is recommended: no deterministic result exists.</p></div>",
+      "css": ".ds-item { font: 1rem/1.5 system-ui, sans-serif; color: #1a1c1e; background: #fff; border: 1px solid #d9dce0; border-radius: .5rem; padding: 1rem; } .ds-option { display: grid; grid-template-columns: minmax(0, 14rem) minmax(0, 1fr); gap: .25rem .75rem; align-items: center; margin: .5rem 0; } .ds-item-btn { font: 1rem/1.5 system-ui, sans-serif; color: #1a1c1e; background: #ffffff; border: 1px solid #8b9099; border-radius: .375rem; min-height: 2.75rem; padding: .5rem .9rem; cursor: pointer; width: 100%; text-align: left; } .ds-item-btn:hover { background: #f0f1f2; } .ds-note { color: #5b6068; font-size: .875rem; }"
+    },
+    {
+      "name": "Figures Table",
+      "kind": "custom",
+      "description": "Figures with numbers set to the right, and a remark under the name it belongs to.",
+      "html": "<table class=\"ds-table\"><thead><tr><th>Kind of run</th><th class=\"ds-num\">Runs</th><th class=\"ds-num\">Net</th></tr></thead><tbody><tr><td>Runs that called tools</td><td class=\"ds-num\">42</td><td class=\"ds-num\">178,810</td></tr><tr><td><b>NEGATIVE: Runs that used no tool</b><div class=\"ds-note\">Consider direct calls for it.</div></td><td class=\"ds-num\">3</td><td class=\"ds-num\">-1,636</td></tr></tbody></table>",
+      "css": ".ds-table { width: 100%; border-collapse: collapse; font: 1rem/1.5 system-ui, sans-serif; color: #1a1c1e; font-variant-numeric: tabular-nums; } .ds-table th, .ds-table td { text-align: left; vertical-align: top; padding: .4rem .75rem .4rem 0; border-bottom: 1px solid #d9dce0; } .ds-table th { font-size: .875rem; font-weight: 600; color: #5b6068; } .ds-table .ds-num { text-align: right; white-space: nowrap; } .ds-note { color: #5b6068; font-size: .875rem; }"
     },
     {
       "name": "Status Message",
       "kind": "custom",
-      "description": "One reserved line under the title. Red when it reports a failure.",
+      "description": "One line that stays at the top of the window. Red when it reports a failure.",
       "html": "<p class=\"ds-message ds-message-bad\">The console could not be reached.</p>",
-      "css": ".ds-message { font: 600 16px/1.5 system-ui, sans-serif; min-height: 1.5rem; } .ds-message-bad { color: #b00020; }"
+      "css": ".ds-message { font: 600 1rem/1.5 system-ui, sans-serif; min-height: 2.5rem; padding: .5rem 0; border-bottom: 1px solid #d9dce0; } .ds-message-bad { color: #b00020; }"
     }
   ],
   "narrative": {
     "northStar": "The Control Panel",
-    "overview": "The console is the labelled switch panel on a piece of equipment. Every control says in plain words what it does. The stop control is unmistakable. Nothing decorates. It is quiet until something needs the owner, and then the thing that needs them is at the top.\n\nThis file records the console as it stands on 2026-11-25. It has never had a design pass. What is here is the browser's own look with a handful of choices on top: one column, the system typeface, hairline rules between sections, and one red kept for stopping. Treat it as an honest record of the starting point, not as a finished identity to be defended.",
+    "overview": "The console is the labelled switch panel on a piece of equipment. Every control says in plain words what it does. The stop control is unmistakable. Nothing decorates. It is quiet until something needs the owner, and then the thing that needs them is at the top.\n\nIt had its first design pass on 2026-11-25. That pass kept the bare starting point (one column, the system typeface, one red) and gave it what it lacked: an order that puts stopping near the top, one consistent set of controls with real states, figures in aligned tables, and colours that hold in light and dark.",
     "keyCharacteristics": [
-      "One narrow column, read top to bottom.",
-      "The system typeface at one size, with weight and a slightly larger size for headings.",
-      "The browser's own buttons, fields and colours, in the reader's light or dark scheme.",
+      "One narrow column, read top to bottom, in order of urgency.",
+      "A one-line summary under the title: the kill switch and Code Mode at a glance.",
+      "The system typeface, in a tight scale.",
+      "Neutral greys for everything but stopping.",
       "One red, used only for the stop button and for a message that reports a failure.",
       "No shadows, no images, no icons, no motion.",
       "Nothing loaded from anywhere else."
     ],
     "rules": [
-      { "name": "The One Red Rule", "body": "Red means stop or failed. It is never used to decorate, to brand, or to mark something as merely important.", "section": "colors" }
+      {
+        "name": "The One Red Rule",
+        "body": "Red means stop or failed. It is never used to decorate, to brand, or to mark something as merely important. A kind of run that loses tokens is marked in words and weight, not in red.",
+        "section": "colors"
+      }
     ],
     "dos": [
       "Do write every value into the page as text, never as markup.",
+      "Do style with classes only. The content policy refuses a style written on an element.",
       "Do keep the page self-contained: one style block and one script, both under the response's nonce, calling only the console's own addresses.",
       "Do say next to each control what it does, in plain words.",
       "Do keep an estimated figure labelled as an estimate wherever it appears.",
@@ -87,6 +198,7 @@
     "donts": [
       "Don't load a font, image, icon set, script or stylesheet from anywhere else. Tests fail the build if the page reaches outside.",
       "Don't use Stop Red for anything but stopping and failure.",
+      "Don't lower secondary text by making it see-through. Use Quiet Ink.",
       "Don't add a build step or a framework for this page without the owner's say."
     ]
   }

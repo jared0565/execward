@@ -8,19 +8,66 @@
  */
 
 const STYLE = `
-:root { color-scheme: light dark; }
-body { font: 16px/1.5 system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
-h1 { font-size: 1.4rem; }
-h2 { font-size: 1.1rem; margin-top: 2rem; }
-section { border-top: 1px solid #8884; padding-top: .5rem; }
-button { font: inherit; padding: .5rem 1rem; margin: .25rem .25rem .25rem 0; cursor: pointer; }
-button.stop { background: #b00020; color: #fff; border: 0; font-weight: 600; }
-input, select { font: inherit; padding: .4rem; margin: .25rem .25rem .25rem 0; max-width: 100%; }
-#message { min-height: 1.5rem; font-weight: 600; }
-#message.bad { color: #b00020; }
-ul { padding-left: 1.2rem; }
-.item { border: 1px solid #8886; border-radius: .4rem; padding: .5rem .75rem; margin: .75rem 0; }
-.muted { opacity: .7; }
+:root {
+  color-scheme: light dark;
+  --bg: #fbfbfa; --surface: #ffffff; --text: #1a1c1e; --muted: #5b6068;
+  --line: #d9dce0; --control: #8b9099; --hover: #f0f1f2; --press: #e4e6e8;
+  --stop: #b00020; --stop-hover: #8f001a; --on-stop: #ffffff; --bad: #b00020;
+  --radius: .375rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131416; --surface: #1b1d20; --text: #e8e9eb; --muted: #a3a8b0;
+    --line: #33363b; --control: #7a808a; --hover: #25282c; --press: #2e3136;
+    --bad: #ff8a98;
+  }
+}
+* { box-sizing: border-box; }
+body { font: 1rem/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); max-width: 44rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; accent-color: var(--text); caret-color: var(--text); }
+::selection { background: var(--text); color: var(--bg); }
+h1 { font-size: 1.5rem; line-height: 1.25; margin: 0; }
+h2 { font-size: 1.125rem; line-height: 1.3; margin: 0 0 .5rem; }
+h3 { font-size: 1rem; margin: 1.25rem 0 .25rem; }
+p { margin: .5rem 0; }
+#summary { margin: .25rem 0 0; color: var(--muted); }
+#message { position: sticky; top: 0; z-index: 1; min-height: 2.5rem; margin: .5rem 0 0; padding: .5rem 0; background: var(--bg); font-weight: 600; border-bottom: 1px solid transparent; }
+#message:not(:empty) { border-bottom-color: var(--line); }
+#message.bad { color: var(--bad); }
+section { border-top: 1px solid var(--line); margin-top: 2rem; padding-top: 1.25rem; }
+#message + section { border-top: 0; margin-top: 0; padding-top: .5rem; }
+button, input, select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--control); border-radius: var(--radius); min-height: 2.75rem; }
+button { padding: .5rem .9rem; cursor: pointer; }
+button:hover { background: var(--hover); }
+button:active { background: var(--press); }
+button.stop { background: var(--stop); border-color: var(--stop); color: var(--on-stop); font-weight: 600; }
+button.stop:hover, button.stop:active { background: var(--stop-hover); border-color: var(--stop-hover); }
+button:disabled { opacity: .55; cursor: default; }
+input, select { padding: .5rem .6rem; width: 100%; max-width: 100%; }
+::placeholder { color: var(--muted); opacity: 1; }
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+label { display: grid; gap: .25rem; font-size: .875rem; font-weight: 600; }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: .75rem; margin: .75rem 0; }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+ul { padding-left: 1.2rem; margin: .5rem 0; }
+.muted { color: var(--muted); }
+.note { color: var(--muted); font-size: .875rem; }
+.item { background: var(--surface); border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; margin: .75rem 0; }
+.item strong { display: block; }
+.item strong::first-letter { text-transform: uppercase; }
+.item label { max-width: 28rem; margin: .75rem 0; }
+.option { display: grid; grid-template-columns: minmax(0, 14rem) minmax(0, 1fr); gap: .25rem .75rem; align-items: center; margin: .5rem 0; }
+.option button { width: 100%; text-align: left; }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: .4rem .75rem .4rem 0; border-bottom: 1px solid var(--line); }
+th { font-size: .875rem; font-weight: 600; color: var(--muted); }
+th:last-child, td:last-child { padding-right: 0; }
+th:first-child, td:first-child { width: 100%; min-width: 11rem; }
+th.num { min-width: 5.5rem; }
+td .note { font-weight: 400; margin-top: .25rem; }
+.num { text-align: right; white-space: nowrap; }
+.flag td:first-child { font-weight: 600; }
+@media (max-width: 30rem) { .option { grid-template-columns: 1fr; } }
 `;
 
 const SCRIPT = `
@@ -34,6 +81,7 @@ const list = (id, items, none) => {
 const show = (state) => {
   $("killed").textContent = state.killed ? "STOPPED. Nothing runs until the kill switch is cleared." : "Not set.";
   $("codeMode").textContent = state.codeMode ? "On" : "Off";
+  $("summary").textContent = (state.killed ? "Kill switch: STOPPED" : "Kill switch: not set") + ". Code Mode: " + (state.codeMode ? "on" : "off") + ".";
   $("onboarding").textContent = state.onboarding ? "Done (" + state.onboarding.profile + " profile)" : "Not done. Code Mode cannot be switched on until it is.";
   $("version").textContent = String(state.version);
   list("paused", state.pausedProjects, "No project is paused.");
@@ -45,6 +93,27 @@ const reply = async (response) => {
   show(body.state); return body.state;
 };
 const el = (tag, text, cls) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (cls) node.className = cls; return node; };
+const count = (n) => Number(n).toLocaleString("en");
+// A table of text cells. Each row is a list of values; a number is set to the right. A row may be { cells, flag, note }.
+const table = (id, head, rows, none) => {
+  const box = $(id); box.replaceChildren();
+  const top = el("tr"); for (const name of head) { const th = el("th", name); th.scope = "col"; top.append(th); }
+  const thead = el("thead"); thead.append(top);
+  const tbody = el("tbody");
+  if (rows.length === 0) { const td = el("td", none, "muted"); td.colSpan = head.length; const tr = el("tr"); tr.append(td); tbody.append(tr); }
+  for (const row of rows) {
+    const cells = Array.isArray(row) ? row : row.cells;
+    const tr = el("tr", undefined, row.flag ? "flag" : "");
+    for (const cell of cells) tr.append(typeof cell === "number" ? el("td", count(cell), "num") : el("td", cell));
+    // The note sits under the name, in the one column that wraps, so it is never off the side of a narrow screen.
+    if (row.note) tr.firstChild.append(el("div", row.note, "note"));
+    tbody.append(tr);
+  }
+  // An empty table is one line saying so, with no headings over it.
+  if (rows.length === 0) box.append(tbody); else box.append(thead, tbody);
+  for (const th of top.children) if (rows.length > 0 && typeof (Array.isArray(rows[0]) ? rows[0] : rows[0].cells)[[...top.children].indexOf(th)] === "number") th.className = "num";
+};
+const busy = (on) => { for (const button of document.querySelectorAll("button")) button.disabled = on; };
 const when = (ms) => new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC";
 const showQueue = (body) => {
   const box = $("queue"); box.replaceChildren();
@@ -56,15 +125,18 @@ const showQueue = (body) => {
     card.append(el("p", "Already done to keep things safe: " + item.safeAction));
     for (const figure of item.figures || []) card.append(el("p", "Figure " + figure.name + ", the " + figure.op + " of " + figure.rows + " numbers: the script said " + figure.declared + " and the server got " + figure.recomputed + (figure.agrees ? ". They agree." : ". They differ.")));
     if (item.acknowledgedAt) card.append(el("p", "You chose to keep it this way on " + when(item.acknowledgedAt) + ". It stays here until you choose something that closes it."));
-    const reason = el("input"); reason.maxLength = 200; reason.size = 40; reason.placeholder = "Reason (needed for some choices)";
-    card.append(reason, el("br"));
+    const reason = el("input"); reason.maxLength = 200;
+    const reasonLabel = el("label", "Reason (needed for some choices)"); reasonLabel.append(reason);
+    card.append(reasonLabel);
     for (const option of item.options) {
       const button = el("button", option.label + (option.id === item.recommended.optionId ? " (recommended)" : ""));
       button.title = option.effect;
       button.onclick = async () => { await act({ action: "resolve", id: item.id, option: option.id, reason: reason.value.trim() }, "Recorded: " + option.label); loadQueue(); };
-      card.append(button, el("span", option.effect + (option.reversible ? "" : " Cannot be undone.") + (option.needsReason ? " Needs a reason." : ""), "muted"), el("br"));
+      const line = el("div", undefined, "option");
+      line.append(button, el("span", option.effect + (option.reversible ? "" : " Cannot be undone.") + (option.needsReason ? " Needs a reason." : ""), "note"));
+      card.append(line);
     }
-    card.append(el("p", "Why that one is recommended: " + item.recommended.rule, "muted"));
+    card.append(el("p", "Why that one is recommended: " + item.recommended.rule, "note"));
     box.append(card);
   }
   list("proposals", body.proposals.map((p) => p.proposal + " (chosen " + p.timesChosen + " times)"), "No rule is proposed.");
@@ -77,19 +149,20 @@ const KINDS = { bounded_tool_heavy: "Runs that called tools", exploratory: "Runs
 const showSaving = (saving) => {
   const day = (ms) => new Date(ms).toISOString().slice(0, 10);
   $("savingPeriod").textContent = "From " + day(saving.periodStart) + " to " + day(saving.periodEnd) + ".";
-  list("saving", saving.lines.filter((line) => line.runs > 0).map((line) =>
-    (line.flagged ? "NEGATIVE. " : "") + (KINDS[line.kind] || line.kind) + ": " + line.runs + " runs, " + line.verifiedRuns + " verified. Estimated saving " + line.estimatedSavingTokens + " tokens, verification used " + line.verificationTokens + ", net " + line.netSavingTokens + "." + (line.advice ? " " + line.advice : "")), "No run has been counted in this period.");
+  table("saving", ["Kind of run", "Runs", "Verified", "Estimated saving", "Verification used", "Net"], saving.lines.filter((line) => line.runs > 0).map((line) => ({
+    cells: [(line.flagged ? "NEGATIVE: " : "") + (KINDS[line.kind] || line.kind), line.runs, line.verifiedRuns, line.estimatedSavingTokens, line.verificationTokens, line.netSavingTokens],
+    flag: line.flagged, note: line.advice })), "No run has been counted in this period.");
 };
 const loadSaving = async () => {
-  try { const response = await fetch("/console/saving"); const body = await response.json().catch(() => ({})); if (response.ok && body.saving) showSaving(body.saving); else list("saving", [], "The figures could not be read."); }
-  catch { list("saving", [], "The figures could not be read."); }
+  try { const response = await fetch("/console/saving"); const body = await response.json().catch(() => ({})); if (response.ok && body.saving) showSaving(body.saving); else table("saving", [""], [], "The figures could not be read."); }
+  catch { table("saving", [""], [], "The figures could not be read."); }
 };
 const showStats = (stats) => {
   const day = (ms) => new Date(ms).toISOString().slice(0, 10);
   $("statsPeriod").textContent = "From " + day(stats.from) + " to " + day(stats.to) + ".";
   for (const by of ["project", "client", "model", "session"]) {
-    list("stats-" + by, (stats.by[by] || []).map((group) =>
-      group.key + ": " + group.runs + " runs. Estimated saving " + group.estimated.savingTokens + " tokens. Measured: " + group.measured.verifiedRuns + " verified, using " + group.measured.verificationTokens + " tokens."), "No run in this period.");
+    table("stats-" + by, ["Name", "Runs", "Estimated saving", "Measured: verified runs", "Measured: verification tokens"], (stats.by[by] || []).map((group) =>
+      [group.key, group.runs, group.estimated.savingTokens, group.measured.verifiedRuns, group.measured.verificationTokens]), "No run in this period.");
   }
   list("statsNotes", stats.notes || [], "");
 };
@@ -99,11 +172,12 @@ const loadStats = async () => {
 };
 const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } loadQueue(); loadSaving(); loadStats(); };
 const act = async (body, done) => {
-  say("Working...");
+  say("Working..."); busy(true);
   try {
     const response = await fetch("/console/action", { method: "POST", headers: { "content-type": "application/json", "x-execward-console": "1" }, body: JSON.stringify(body) });
     if (await reply(response)) say(done);
   } catch { say("The console could not be reached. Nothing is known to have changed.", true); }
+  finally { busy(false); }
 };
 const val = (id) => $(id).value.trim();
 $("kill").onclick = () => act({ action: "kill", reason: val("killReason") }, "Stopped.");
@@ -117,12 +191,13 @@ $("block").onclick = () => act({ action: "block_tool", tool: val("tool"), reason
 $("testEmail").onclick = () => act({ action: "test_email" }, "Test email sent. Check your inbox, and your spam folder.");
 $("unblock").onclick = () => act({ action: "unblock_tool", tool: val("tool"), reason: val("toolReason") }, "Tool unblocked.");
 $("writeCheck").onclick = async () => {
-  say("Working...");
+  say("Working..."); busy(true);
   try {
     const response = await fetch("/console/action", { method: "POST", headers: { "content-type": "application/json", "x-execward-console": "1" }, body: JSON.stringify({ action: "github_write_check", repository: val("writeRepo") }) });
     const body = await response.json().catch(() => ({}));
     say(body.message || "The check could not be run.", !(response.ok && body.writeCheck && body.writeCheck.outcome === "refused"));
   } catch { say("The console could not be reached.", true); }
+  finally { busy(false); }
 };
 load();
 `;
@@ -139,90 +214,103 @@ export function consolePage(nonce: string): string {
 </head>
 <body>
 <h1>ExecWard console</h1>
+<p id="summary">Loading...</p>
 <p id="message" role="status" aria-live="polite"></p>
 
 <section>
 <h2>Waiting for you</h2>
 <div id="queue"><p class="muted">Loading...</p></div>
-<h2>Proposed rules</h2>
+<h3>Proposed rules</h3>
 <ul id="proposals"></ul>
-<p class="muted">A choice you have made several times is listed here as a proposal. Nothing is adopted by itself.</p>
-</section>
-
-<section>
-<h2>Net saving after verification</h2>
-<p id="savingPeriod" class="muted"></p>
-<ul id="saving"><li class="muted">Loading...</li></ul>
-<p class="muted">The saving is an estimate from a rough rule of one token per four bytes. Verification tokens are the provider's own count. A kind of run marked NEGATIVE uses more tokens than it saves.</p>
-</section>
-
-<section>
-<h2>Stats</h2>
-<p id="statsPeriod" class="muted"></p>
-<h3>By project</h3><ul id="stats-project"></ul>
-<h3>By client</h3><ul id="stats-client"></ul>
-<h3>By model</h3><ul id="stats-model"></ul>
-<h3>By session</h3><ul id="stats-session"></ul>
-<ul id="statsNotes" class="muted"></ul>
+<p class="note">A choice you have made several times is listed here as a proposal. Nothing is adopted by itself.</p>
 </section>
 
 <section>
 <h2>Kill switch</h2>
 <p id="killed">Loading...</p>
-<label>Reason <input id="killReason" maxlength="200" size="40"></label><br>
+<div class="fields"><label>Reason <input id="killReason" maxlength="200"></label></div>
+<div class="actions">
 <button class="stop" id="kill">Stop everything now</button>
 <button id="clearKill">Clear the kill switch</button>
-<p class="muted">Stopping never waits for a reason. Clearing needs one.</p>
+</div>
+<p class="note">Stopping never waits for a reason. Clearing needs one.</p>
 </section>
 
 <section>
 <h2>Code Mode</h2>
 <p>Currently: <strong id="codeMode">Loading...</strong></p>
+<div class="actions">
 <button id="on">Switch on</button>
 <button id="off">Switch off</button>
-</section>
-
-<section>
-<h2>Onboarding</h2>
-<p id="onboarding">Loading...</p>
-<label>Governance profile
-<select id="profile"><option value="lightweight">Lightweight</option><option value="formal">Formal</option></select></label>
-<button id="onboard">Record onboarding</button>
-<p class="muted">Both profiles run the same security controls. Every other setting keeps its safe default.</p>
+</div>
 </section>
 
 <section>
 <h2>Paused projects</h2>
 <ul id="paused"></ul>
+<div class="fields">
 <label>Project <input id="project" maxlength="200"></label>
-<label>Reason <input id="projectReason" maxlength="200" size="30"></label><br>
+<label>Reason <input id="projectReason" maxlength="200"></label>
+</div>
+<div class="actions">
 <button id="pause">Pause</button>
 <button id="resume">Resume</button>
+</div>
 </section>
 
 <section>
 <h2>Blocked tools</h2>
 <ul id="blocked"></ul>
+<div class="fields">
 <label>Tool <input id="tool" maxlength="200"></label>
-<label>Reason <input id="toolReason" maxlength="200" size="30"></label><br>
+<label>Reason <input id="toolReason" maxlength="200"></label>
+</div>
+<div class="actions">
 <button id="block">Block</button>
 <button id="unblock">Unblock</button>
+</div>
+</section>
+
+<section>
+<h2>Net saving after verification</h2>
+<p id="savingPeriod" class="note"></p>
+<div class="scroll"><table id="saving"><tbody><tr><td class="muted">Loading...</td></tr></tbody></table></div>
+<p class="note">The saving is an estimate from a rough rule of one token per four bytes. Verification tokens are the provider's own count. A kind of run marked NEGATIVE uses more tokens than it saves.</p>
+</section>
+
+<section>
+<h2>Stats</h2>
+<p id="statsPeriod" class="note"></p>
+<h3>By project</h3><div class="scroll"><table id="stats-project"></table></div>
+<h3>By client</h3><div class="scroll"><table id="stats-client"></table></div>
+<h3>By model</h3><div class="scroll"><table id="stats-model"></table></div>
+<h3>By session</h3><div class="scroll"><table id="stats-session"></table></div>
+<ul id="statsNotes" class="note"></ul>
+</section>
+
+<section>
+<h2>Onboarding</h2>
+<p id="onboarding">Loading...</p>
+<div class="fields"><label>Governance profile
+<select id="profile"><option value="lightweight">Lightweight</option><option value="formal">Formal</option></select></label></div>
+<div class="actions"><button id="onboard">Record onboarding</button></div>
+<p class="note">Both profiles run the same security controls. Every other setting keeps its safe default.</p>
 </section>
 
 <section>
 <h2>Email</h2>
 <p>Urgent items are emailed to you at once, and the rest once a day. An email only ever says that something is waiting, with a link to this console.</p>
-<button id="testEmail">Send me a test email</button>
+<div class="actions"><button id="testEmail">Send me a test email</button></div>
 </section>
 
 <section>
 <h2>GitHub</h2>
 <p>ExecWard may only read from GitHub. This tries one harmless write, which GitHub should refuse, and records the answer in the audit log.</p>
-<input id="writeRepo" placeholder="owner/repository" autocomplete="off">
-<button id="writeCheck">Check that GitHub refuses a write</button>
+<div class="fields"><label>Repository <input id="writeRepo" placeholder="owner/repository" autocomplete="off"></label></div>
+<div class="actions"><button id="writeCheck">Check that GitHub refuses a write</button></div>
 </section>
 
-<p class="muted">Every change is numbered and written to the audit log. Current number: <span id="version">-</span>.</p>
+<p class="note">Every change is numbered and written to the audit log. Current number: <span id="version">-</span>.</p>
 <script nonce="${nonce}">${SCRIPT}</script>
 </body>
 </html>
