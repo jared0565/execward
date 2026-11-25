@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-25T00:00:00.000Z",
+  "title": "Design System: ExecWard",
+  "extensions": {
+    "colorMeta": {
+      "stop-red": {
+        "role": "primary",
+        "displayName": "Stop Red",
+        "canonical": "#b00020",
+        "tonalRamp": ["#2d0008", "#560010", "#840018", "#b00020", "#cf3f55", "#e17e8c", "#efb6be", "#f9e3e6"]
+      },
+      "on-stop": { "role": "neutral", "displayName": "On Stop", "canonical": "#ffffff" },
+      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "#8884" },
+      "item-border": { "role": "neutral", "displayName": "Item Border", "canonical": "#8886" }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "The page's one title." },
+      "headline": { "displayName": "Headline", "purpose": "The name of each section." },
+      "body": { "displayName": "Body", "purpose": "Everything else, including buttons and fields." },
+      "label": { "displayName": "Label", "purpose": "The status message and the stop button." }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Stop Button",
+      "kind": "button",
+      "refersTo": "button-stop",
+      "description": "Stops everything. There is one, and it is the only filled button.",
+      "html": "<button class=\"ds-btn-stop\">Stop everything now</button>",
+      "css": ".ds-btn-stop { font: 600 16px/1.5 system-ui, sans-serif; padding: .5rem 1rem; margin: .25rem .25rem .25rem 0; cursor: pointer; background: #b00020; color: #fff; border: 0; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "description": "Every other action. The browser's own button in the body typeface.",
+      "html": "<button class=\"ds-btn\">Clear the kill switch</button>",
+      "css": ".ds-btn { font: 16px/1.5 system-ui, sans-serif; padding: .5rem 1rem; margin: .25rem .25rem .25rem 0; cursor: pointer; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "description": "The browser's own field, labelled by the plain text wrapped round it.",
+      "html": "<label class=\"ds-label\">Reason <input class=\"ds-input\" maxlength=\"200\" size=\"30\"></label>",
+      "css": ".ds-label { font: 16px/1.5 system-ui, sans-serif; } .ds-input { font: inherit; padding: .4rem; margin: .25rem .25rem .25rem 0; max-width: 100%; }"
+    },
+    {
+      "name": "Queue Item",
+      "kind": "card",
+      "refersTo": "queue-item",
+      "description": "One thing waiting for the owner's decision, with its options and what each does.",
+      "html": "<div class=\"ds-item\"><strong>A critical figure did not match</strong><br><button class=\"ds-item-btn\">Discard both</button><span class=\"ds-muted\">Neither result is used.</span><p class=\"ds-muted\">Why that one is recommended: no deterministic result exists.</p></div>",
+      "css": ".ds-item { font: 16px/1.5 system-ui, sans-serif; border: 1px solid #8886; border-radius: .4rem; padding: .5rem .75rem; margin: .75rem 0; } .ds-item-btn { font: inherit; padding: .5rem 1rem; margin: .25rem .25rem .25rem 0; cursor: pointer; } .ds-muted { opacity: .7; }"
+    },
+    {
+      "name": "Status Message",
+      "kind": "custom",
+      "description": "One reserved line under the title. Red when it reports a failure.",
+      "html": "<p class=\"ds-message ds-message-bad\">The console could not be reached.</p>",
+      "css": ".ds-message { font: 600 16px/1.5 system-ui, sans-serif; min-height: 1.5rem; } .ds-message-bad { color: #b00020; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Control Panel",
+    "overview": "The console is the labelled switch panel on a piece of equipment. Every control says in plain words what it does. The stop control is unmistakable. Nothing decorates. It is quiet until something needs the owner, and then the thing that needs them is at the top.\n\nThis file records the console as it stands on 2026-11-25. It has never had a design pass. What is here is the browser's own look with a handful of choices on top: one column, the system typeface, hairline rules between sections, and one red kept for stopping. Treat it as an honest record of the starting point, not as a finished identity to be defended.",
+    "keyCharacteristics": [
+      "One narrow column, read top to bottom.",
+      "The system typeface at one size, with weight and a slightly larger size for headings.",
+      "The browser's own buttons, fields and colours, in the reader's light or dark scheme.",
+      "One red, used only for the stop button and for a message that reports a failure.",
+      "No shadows, no images, no icons, no motion.",
+      "Nothing loaded from anywhere else."
+    ],
+    "rules": [
+      { "name": "The One Red Rule", "body": "Red means stop or failed. It is never used to decorate, to brand, or to mark something as merely important.", "section": "colors" }
+    ],
+    "dos": [
+      "Do write every value into the page as text, never as markup.",
+      "Do keep the page self-contained: one style block and one script, both under the response's nonce, calling only the console's own addresses.",
+      "Do say next to each control what it does, in plain words.",
+      "Do keep an estimated figure labelled as an estimate wherever it appears.",
+      "Do put the safe action first."
+    ],
+    "donts": [
+      "Don't load a font, image, icon set, script or stylesheet from anywhere else. Tests fail the build if the page reaches outside.",
+      "Don't use Stop Red for anything but stopping and failure.",
+      "Don't add a build step or a framework for this page without the owner's say."
+    ]
+  }
+}
