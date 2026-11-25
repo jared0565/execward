@@ -11,9 +11,10 @@ import auditMigration from "../../migrations/0002_audit_log.sql";
 import stateMigration from "../../migrations/0003_state.sql";
 import attemptsMigration from "../../migrations/0004_attempts.sql";
 import seenMigration from "../../migrations/0005_switches_seen.sql";
+import meterMigration from "../../migrations/0006_meter_records.sql";
 import { switchNotices } from "../../src/mcp/switch-notice";
 import { attemptKey, storedAttemptGate } from "../../src/code-tool/stored-attempts";
-import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, putProjectRecord, sweepQuotaCounters, type StateDatabase, d1SettingsSeenStore } from "../../src/storage/d1-stores";
+import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1StatsStore, putProjectRecord, sweepQuotaCounters, type StateDatabase, d1SettingsSeenStore } from "../../src/storage/d1-stores";
 import { applyRetention, auditLog, d1AuditStore, deleteProjectLogs, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
 import { BACKUP_TABLES, backUp, restore, type BackupBucket, type BackupDatabase } from "../../src/backup";
 import { brokerHost } from "../../src/broker/broker";
@@ -165,7 +166,7 @@ function fixture(): Promise<{ backend: ToolBackend; pins: Pin[]; records: Policy
 /** Drops every table and builds them again from the three migrations. */
 async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): Promise<void> {
   for (const name of ["audit_log_no_update", "audit_log_no_delete"]) await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).bind().run();
-  for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots", "attempt_state", "switches_seen"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
+  for (const table of [...BACKUP_TABLES, "quota_counters", "quota_slots", "attempt_state", "switches_seen", "meter_records"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
   await db.prepare(migration).bind().run();
   for (const statement of auditMigration.split(/;\s*\n(?=CREATE)/)) await db.prepare(statement).bind().run();
   const state = stateMigration
@@ -174,7 +175,7 @@ async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): 
     .join("\n");
   for (const statement of state.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
   // Each of these is one statement.
-  for (const sql of [attemptsMigration, seenMigration]) {
+  for (const sql of [attemptsMigration, seenMigration, meterMigration]) {
     await db
       .prepare(
         sql
@@ -457,8 +458,18 @@ export default {
       // and runs a list of operations, in order or all at once, returning each one's result.
       const body = (await request.json()) as StoresBody;
       const db = env.DB as unknown as StateDatabase;
-      for (const table of ["quota_counters", "quota_slots", "control_state", "escalations", "projects"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
+      for (const table of ["quota_counters", "quota_slots", "control_state", "escalations", "projects", "meter_records"]) await db.prepare(`DROP TABLE IF EXISTS ${table}`).bind().run();
       if (!body.noTables) {
+        await db
+          .prepare(
+            meterMigration
+              .split("\n")
+              .filter((line) => !line.trim().startsWith("--"))
+              .join("\n")
+              .replace(";", ""),
+          )
+          .bind()
+          .run();
         // One statement at a time, with the comment lines taken out first.
         const sql = stateMigration
           .split("\n")
@@ -473,6 +484,7 @@ export default {
         escalations: d1EscalationStore(db) as never,
         projects: { ...d1ProjectStore(db), put: (record: never, gate: never) => putProjectRecord(db, record, gate) } as never,
         sweep: { counters: (now: never) => sweepQuotaCounters(db, now) } as never,
+        stats: d1StatsStore(db) as never,
       };
       const perform = async (op: StoreOp): Promise<unknown> => {
         try {

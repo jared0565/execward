@@ -22,13 +22,15 @@ export interface MaintenanceDeps {
   readonly escalations: Pick<EscalationStore, "all">;
   readonly notifier?: Pick<Notifier, "digest" | "remind">;
   readonly sweepCounters?: (now: number) => Promise<void>;
+  /** Removes stats rows past their keeping time (task 2.3.1). */
+  readonly trimStats?: (now: number) => Promise<void>;
   /** The daily check of the reviewer model (task 2.2.4). Returns what it did, as counts. */
   readonly checkReviewer?: () => Promise<string>;
   readonly now: () => number;
 }
 
 export interface JobResult {
-  readonly job: "expire_escalations" | "send_reminders" | "apply_retention" | "check_reviewer" | "send_digest" | "sweep_counters";
+  readonly job: "expire_escalations" | "send_reminders" | "apply_retention" | "check_reviewer" | "send_digest" | "sweep_counters" | "trim_stats";
   readonly ok: boolean;
   /** What the job did, as counts. Never content. */
   readonly detail: string;
@@ -63,5 +65,7 @@ export async function runMaintenance(deps: MaintenanceDeps, round: MaintenanceRo
   if (notifier) await job("send_digest", async () => ((await notifier.digest(await open())) ? "sent" : "nothing waiting"));
   const sweep = deps.sweepCounters;
   if (sweep) await job("sweep_counters", async () => (await sweep(deps.now()), "swept"));
+  const trim = deps.trimStats;
+  if (trim) await job("trim_stats", async () => (await trim(deps.now()), "trimmed"));
   return results;
 }

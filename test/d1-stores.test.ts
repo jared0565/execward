@@ -293,6 +293,37 @@ describe("backup to a bucket and restore (task 1.4.5)", { timeout: 120_000 }, ()
   });
 });
 
+describe("the stats rows in the database (task 2.3.1)", () => {
+  const NOW = Date.UTC(2026, 10, 25, 12);
+  const row = (over: Record<string, unknown>) => ({ runId: "a", at: NOW, project: "billing", session: "s-1", client: "claude-code", model: "m-1", kind: "bounded_tool_heavy", estimatedSavingTokens: 1000, verified: true, verificationTokens: 500, ...over });
+
+  it("keeps a run once, groups the rows the way the report asks, and trims old ones", async () => {
+    const reply = await stores([
+      ["stats", "write", row({})],
+      ["stats", "write", row({ estimatedSavingTokens: 999_999 })],
+      ["stats", "write", row({ runId: "b", client: "codex", model: "m-2", session: "s-2", estimatedSavingTokens: -40, verified: false, verificationTokens: 0 })],
+      ["stats", "write", row({ runId: "c", project: "dashboard", estimatedSavingTokens: 300, verificationTokens: 450 })],
+      ["stats", "write", row({ runId: "old", at: NOW - 100 * 86_400_000, project: "ancient" })],
+      ["stats", "groups", "project", NOW - 30 * 86_400_000],
+      ["stats", "groups", "client", NOW - 30 * 86_400_000],
+      ["stats", "trim", NOW - 90 * 86_400_000],
+      ["stats", "groups", "project", 0],
+    ]);
+    const got = values(reply);
+    expect(got.filter((value) => typeof value === "string" && value.startsWith("error"))).toEqual([]);
+    expect(got[5]).toEqual([
+      { key: "billing", runs: 2, estimated: { savingTokens: 960 }, measured: { verifiedRuns: 1, verificationTokens: 500 } },
+      { key: "dashboard", runs: 1, estimated: { savingTokens: 300 }, measured: { verifiedRuns: 1, verificationTokens: 450 } },
+    ]);
+    expect(got[6]).toEqual([
+      { key: "claude-code", runs: 2, estimated: { savingTokens: 1300 }, measured: { verifiedRuns: 2, verificationTokens: 950 } },
+      { key: "codex", runs: 1, estimated: { savingTokens: -40 }, measured: { verifiedRuns: 0, verificationTokens: 0 } },
+    ]);
+    // After the trim the row from a hundred days ago is gone.
+    expect((got[8] as { key: string }[]).map((group) => group.key)).toEqual(["billing", "dashboard"]);
+  });
+});
+
 describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout: 120_000 }, () => {
   const DAY = 86_400_000;
   const MORNING = Date.UTC(2027, 0, 15, 0, 5);
@@ -312,7 +343,8 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
   it("does the daily round once a day, at the first firing, and only the frequent round after that", async () => {
     const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000, MORNING + 10 * 60_000, MORNING + DAY] });
     expect(reply.runs.map((run) => run.daily !== undefined)).toEqual([true, false, false, true]);
-    expect(reply.runs[0]?.daily?.map((job) => job.job)).toEqual(["apply_retention", "check_reviewer", "sweep_counters"]);
+    expect(reply.runs[0]?.daily?.map((job) => job.job)).toEqual(["apply_retention", "check_reviewer", "sweep_counters", "trim_stats"]);
+    expect(reply.runs[0]?.daily?.find((job) => job.job === "trim_stats")).toMatchObject({ ok: true });
     // No verification key in this Worker: the reviewer could not be asked, so the check counted nothing.
     expect(reply.runs[0]?.daily?.find((job) => job.job === "check_reviewer")).toMatchObject({ ok: true, detail: "the reviewer could not be asked in 5 of 5 cases; nothing counted" });
     expect(reply.runs[0]?.backup).toMatchObject({ key: "backups/2027-01-15.json" });

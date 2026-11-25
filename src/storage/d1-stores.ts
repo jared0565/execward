@@ -19,11 +19,12 @@ import type { SettingsSeen, SettingsSeenStore } from "../mcp/switch-notice";
 import { INITIAL_CONTROL_STATE, type ControlState, type ControlStore } from "../console/control";
 import type { EscalationItem, EscalationStore } from "../console/escalations";
 import { DATA_CLASSES, type DataClass } from "../contracts/policy";
+import { STATS_MAX_GROUPS, type StatsDimension, type StatsStore } from "../meter/stats";
 
 /** The part of a D1 database these stores use. */
 export interface StateDatabase {
   prepare(sql: string): {
-    bind(...values: unknown[]): { first<T>(): Promise<T | null>; run(): Promise<unknown> };
+    bind(...values: unknown[]): { first<T>(): Promise<T | null>; run(): Promise<unknown>; all<T>(): Promise<{ results: T[] }> };
     all<T>(): Promise<{ results: T[] }>;
   };
 }
@@ -51,6 +52,35 @@ export function d1QuotaStore(db: StateDatabase): QuotaStore {
     },
     async release(key, holder) {
       await db.prepare("DELETE FROM quota_slots WHERE key = ?1 AND holder = ?2").bind(key, holder).run();
+    },
+  };
+}
+
+/** One row per metered run, for the stats report (table in migrations/0006_meter_records.sql). */
+export function d1StatsStore(db: StateDatabase): StatsStore {
+  // The column for each grouping. Fixed here: a name from outside never reaches the SQL.
+  const column: Record<StatsDimension, string> = { session: "session", project: "project", client: "client", model: "model" };
+  return {
+    async write(row) {
+      await db
+        .prepare(
+          "INSERT INTO meter_records (run_id, at, project, session, client, model, kind, estimated_saving, verified, verification_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT(run_id) DO NOTHING",
+        )
+        .bind(row.runId, row.at, row.project, row.session, row.client, row.model, row.kind, row.estimatedSavingTokens, row.verified ? 1 : 0, row.verificationTokens)
+        .run();
+    },
+    async groups(dimension, since) {
+      const name = column[dimension];
+      const found = await db
+        .prepare(
+          `SELECT ${name} AS key, COUNT(*) AS runs, SUM(estimated_saving) AS saving, SUM(verified) AS verified, SUM(verification_tokens) AS tokens FROM meter_records WHERE at >= ?1 GROUP BY ${name} ORDER BY runs DESC, key ASC LIMIT ${STATS_MAX_GROUPS}`,
+        )
+        .bind(since)
+        .all<{ key: string; runs: number; saving: number; verified: number; tokens: number }>();
+      return found.results.map((row) => ({ key: row.key, runs: row.runs, estimated: { savingTokens: row.saving }, measured: { verifiedRuns: row.verified, verificationTokens: row.tokens } }));
+    },
+    async trim(before) {
+      await db.prepare("DELETE FROM meter_records WHERE at < ?1").bind(before).run();
     },
   };
 }

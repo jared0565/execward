@@ -194,7 +194,7 @@ Exit: Gate 2. Security review passed, every threat-table row tested and the adve
 
 | ID | Task | Traces to | Depends on | Done when | Priority | Status |
 |---|---|---|---|---|---|---|
-| 2.3.1 | Build the stats report | FR-20 | 1.8.2, 2.1.6 | Grouped by session, project, client and model, with estimated and measured savings kept apart | P1 | Not started |
+| 2.3.1 | Build the stats report | FR-20 | 1.8.2, 2.1.6 | Grouped by session, project, client and model, with estimated and measured savings kept apart. 2026-11-25: the owner approved a new database table. Built (`src/meter/stats.ts`, `migrations/0006_meter_records.sql`): each metered run leaves one row of labels and counts, never content; the owner's console shows the last 30 days grouped the four ways, with the meter's estimate and the provider's measured verification tokens apart in every line. No measured saving is shown, and the report says why: it exists only for eval runs. The server issues no sessions, so a run whose client sends no session of its own is grouped by day. Rows older than 90 days are removed daily. Still owed before this is Done: the owner seeing the section with real runs in it. See docs/decisions/2.3.1-stats-report.md | P1 | In progress |
 | 2.3.2 | Decide whether to ship the skill | Open questions; Delivery options | 2.3.1 | Decision recorded from Phase 2 usage data | — | Not started |
 | 2.3.3 | Pass the Gate 2 security review | Gate 2; Risk: sandbox escape | 1.9.7, 2.1.5, 2.2.3 | Every threat-table row tested; the sandbox reviewed again; adversarial suite passing | — | Not started |
 | 2.3.4 | Pass Gate 2 | Gate 2 | 2.3.1, 2.3.3 and every other Phase 2 task | All Gate 2 evidence recorded; Phase 3 can start | — | Not started |
