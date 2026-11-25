@@ -62,8 +62,8 @@ table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nu
 th, td { text-align: left; vertical-align: top; padding: .4rem .75rem .4rem 0; border-bottom: 1px solid var(--line); }
 th { font-size: .875rem; font-weight: 600; color: var(--muted); }
 th:last-child, td:last-child { padding-right: 0; }
-th:first-child, td:first-child { width: 100%; min-width: 11rem; }
-th.num { min-width: 5.5rem; }
+th:first-child, td:first-child { width: 100%; min-width: 9rem; }
+th.num { white-space: normal; }
 td .note { font-weight: 400; margin-top: .25rem; }
 .num { text-align: right; white-space: nowrap; }
 .flag td:first-child { font-weight: 600; }
@@ -82,6 +82,7 @@ const show = (state) => {
   $("killed").textContent = state.killed ? "STOPPED. Nothing runs until the kill switch is cleared." : "Not set.";
   $("codeMode").textContent = state.codeMode ? "On" : "Off";
   $("summary").textContent = (state.killed ? "Kill switch: STOPPED" : "Kill switch: not set") + ". Code Mode: " + (state.codeMode ? "on" : "off") + ".";
+  if (state.onboarding) $("profile").value = state.onboarding.profile;
   $("onboarding").textContent = state.onboarding ? "Done (" + state.onboarding.profile + " profile)" : "Not done. Code Mode cannot be switched on until it is.";
   $("version").textContent = String(state.version);
   list("paused", state.pausedProjects, "No project is paused.");

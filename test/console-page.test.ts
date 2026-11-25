@@ -55,6 +55,15 @@ describe("the console page's layout (the design pass of 2026-11-25)", () => {
     expect(page).toContain('tr.firstChild.append(el("div", row.note, "note"))');
   });
 
+  it("lets a table's headings wrap, so a table fits a desk-width screen (seen cut off on production, 2026-11-25)", () => {
+    expect(page).toContain("th.num { white-space: normal; }");
+    expect(page).not.toMatch(/th\.num \{[^}]*min-width/);
+  });
+
+  it("shows the recorded governance profile in the dropdown, not always the first one", () => {
+    expect(page).toContain('if (state.onboarding) $("profile").value = state.onboarding.profile;');
+  });
+
   it("keeps secondary text at full strength instead of making it see-through", () => {
     expect(page).toContain(".muted { color: var(--muted); }");
     expect(page).not.toMatch(/\.muted \{[^}]*opacity/);
