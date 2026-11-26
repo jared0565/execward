@@ -127,6 +127,23 @@ describe("the daily check of the reviewer", () => {
     expect(items[0]?.recommended.optionId).toBe("leave_off");
   });
 
+  // The owner's decision of 2026-11-26: a reviewer left off is worth a reminder each day.
+  it("raises another item on every further failed day while the reviewer stays off", async () => {
+    const { check, store, escalations, nextDay, now } = setup();
+    await check(scripted(passesEverything));
+    nextDay();
+    await check(scripted(passesEverything));
+    nextDay();
+    expect(await check(scripted(passesEverything))).toContain("failed days in a row: 3; the reviewer is off");
+    nextDay();
+    await check(scripted(passesEverything));
+    expect(await reviewerIsOff(store, now())).toBe(true);
+    const items = [...escalations.items.values()];
+    expect(items).toHaveLength(3);
+    expect(items.every((item) => item.trigger === "reviewer_check_failed")).toBe(true);
+    expect(new Set(items.map((item) => item.runId)).size).toBe(3);
+  });
+
   it("goes on checking while the reviewer is off, and the first day that passes switches it back on", async () => {
     const { check, store, nextDay, now } = setup();
     await check(scripted(passesEverything));
