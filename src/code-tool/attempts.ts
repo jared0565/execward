@@ -38,6 +38,11 @@ export interface AttemptGate {
   remaining(): number;
 }
 
+/** A gate that is closed from the start and keeps nothing: every run is refused with `refusal`. */
+export function closedGate(refusal: ExecWardError): AttemptGate {
+  return { blocked: () => refusal, retries: () => 0, remaining: () => 0, settle: async () => undefined };
+}
+
 export interface AttemptGateOptions {
   readonly maxRetries?: number;
   /** Called once, when the task is closed and must go to a person. */

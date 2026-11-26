@@ -53,7 +53,14 @@ export interface AttemptStore {
   setEscalation(key: string, escalationId: string): Promise<void>;
   /** Records that an attempt was made, without changing anything else. */
   touch(key: string, now: number): Promise<void>;
+  /** Forgets the key whatever its state: for a closure the owner dealt with, or one that ran out of time. */
   clear(key: string): Promise<void>;
+  /**
+   * Forgets the count unless the key is closed, in one step. For a run that succeeded: it was
+   * admitted before it ran, and another run may have closed the project since. A closure is
+   * never undone by a success.
+   */
+  clearOpen(key: string): Promise<void>;
 }
 
 export function memoryAttemptStore(): AttemptStore & { readonly states: Map<string, AttemptState> } {
@@ -82,6 +89,9 @@ export function memoryAttemptStore(): AttemptStore & { readonly states: Map<stri
       if (before !== undefined) states.set(key, { ...before, updatedAt: now });
     },
     clear: async (key) => void states.delete(key),
+    async clearOpen(key) {
+      if (states.get(key)?.closed === undefined) states.delete(key);
+    },
   };
 }
 
@@ -157,7 +167,8 @@ export async function storedAttemptGate(deps: StoredAttemptDeps, key: string): P
         return;
       }
       if (output.status === "completed" || output.status === "paused") {
-        if (failures > 0) await deps.store.clear(key);
+        // Only an open count: this run was admitted earlier, and the project may have been closed since.
+        if (failures > 0) await deps.store.clearOpen(key);
         failures = 0;
         return;
       }

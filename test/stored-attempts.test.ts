@@ -52,6 +52,28 @@ function setup() {
 }
 
 describe("the retry limit kept between requests (task 2.1.5, FR-41)", () => {
+  // aramid review finding on src/code-tool/stored-attempts.ts, 2026-11-26.
+  it("does not let a run that started before a closure, and then succeeds, reopen the project", async () => {
+    const { attempt, deps, store } = setup();
+    await attempt(failed());
+    // A slow run is admitted now, with one failure on record, and ends last.
+    const slow = await storedAttemptGate(deps, KEY);
+    expect(slow.blocked()).toBeUndefined();
+    await attempt(failed());
+    await attempt(failed("script_error", "run-3"));
+    expect(store.states.get(KEY)?.closed).toBeDefined();
+    await slow.settle(completed);
+    expect(store.states.get(KEY)?.closed).toBeDefined();
+    expect((await attempt(completed)).blocked?.code).toBe("quota_exceeded");
+  });
+
+  it("still clears an open count when a run succeeds", async () => {
+    const { attempt, store } = setup();
+    await attempt(failed());
+    await attempt(completed);
+    expect(store.states.get(KEY)).toBeUndefined();
+  });
+
   it("lets two retries follow a failure and refuses the run after the third failure, across separate requests", async () => {
     const { attempt, escalations } = setup();
     expect((await attempt(failed())).blocked).toBeUndefined();

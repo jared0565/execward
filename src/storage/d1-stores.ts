@@ -203,6 +203,10 @@ export function d1AttemptStore(db: StateDatabase): AttemptStore {
     async clear(key) {
       await db.prepare("DELETE FROM attempt_state WHERE key = ?1").bind(key).run();
     },
+    async clearOpen(key) {
+      // One statement: a closure written a moment ago by another run is not deleted.
+      await db.prepare("DELETE FROM attempt_state WHERE key = ?1 AND closed IS NULL").bind(key).run();
+    },
   };
 }
 
