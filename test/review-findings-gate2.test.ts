@@ -238,12 +238,23 @@ describe("F4: what the reviewer is shown", () => {
     deterministicCheckPassed: true,
     tier: 0,
   };
-  const inside = (input: ReviewInput) => JSON.parse(reviewMaterial(input).slice(REVIEW_OPEN.length, -REVIEW_CLOSE.length)) as { output: string; outputWasCut: boolean };
+  const inside = (input: ReviewInput) => JSON.parse(reviewMaterial(input).slice(REVIEW_OPEN.length, -REVIEW_CLOSE.length)) as { output: unknown; outputWasCut: boolean };
 
   it("keeps the number 5 and the text 5 apart", () => {
-    expect(inside(INPUT).output).toBe("5");
-    expect(inside({ ...INPUT, output: "5" }).output).toBe('"5"');
+    expect(inside(INPUT).output).toBe(5);
+    expect(inside({ ...INPUT, output: "5" }).output).toBe("5");
     expect(reviewMaterial(INPUT)).not.toBe(reviewMaterial({ ...INPUT, output: "5" }));
+  });
+
+  // Seen on production on 2026-11-26, an hour after the first fix for this finding: the number was
+  // sent as JSON text inside the JSON material, so it reached the reviewer in quotes, the
+  // instructions said quotes mean text, and a right answer of 5 was blocked.
+  it("shows the reviewer a number as a number, not in quotes", () => {
+    const material = reviewMaterial(INPUT);
+    expect(material).toMatch(/"output": ?5,/);
+    expect(material).not.toMatch(/"output": ?"5"/);
+    expect(inside({ ...INPUT, output: [12, 15, 18] }).output).toEqual([12, 15, 18]);
+    expect(inside({ ...INPUT, output: undefined }).output).toBeNull();
   });
 
   const answering = (text: string): VerificationAccess => ({
