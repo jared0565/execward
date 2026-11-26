@@ -12,9 +12,10 @@ import stateMigration from "../../migrations/0003_state.sql";
 import attemptsMigration from "../../migrations/0004_attempts.sql";
 import seenMigration from "../../migrations/0005_switches_seen.sql";
 import meterMigration from "../../migrations/0006_meter_records.sql";
+import clientChoiceMigration from "../../migrations/0007_client_choice.sql";
 import { switchNotices } from "../../src/mcp/switch-notice";
 import { attemptKey, storedAttemptGate } from "../../src/code-tool/stored-attempts";
-import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1StatsStore, putProjectRecord, sweepQuotaCounters, type StateDatabase, d1SettingsSeenStore } from "../../src/storage/d1-stores";
+import { d1AttemptStore, d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1StatsStore, listProjectRecords, putProjectRecord, setClientChoice, sweepQuotaCounters, type StateDatabase, d1SettingsSeenStore } from "../../src/storage/d1-stores";
 import { applyRetention, auditLog, d1AuditStore, deleteProjectLogs, memoryAuditStore, verifyChain, type AuditDatabase } from "../../src/audit/log";
 import { BACKUP_TABLES, backUp, restore, type BackupBucket, type BackupDatabase } from "../../src/backup";
 import { brokerHost } from "../../src/broker/broker";
@@ -183,6 +184,15 @@ function fixture(): Promise<{ backend: ToolBackend; pins: Pin[]; records: Policy
   return fixtureStack;
 }
 
+/** Runs a migration of several plain statements, one at a time, with the comment lines taken out first. */
+async function runStatements(db: StateDatabase, sql: string): Promise<void> {
+  const plain = sql
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n");
+  for (const statement of plain.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
+}
+
 /** Drops every table and builds them again from the three migrations. */
 async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): Promise<void> {
   for (const name of ["audit_log_no_update", "audit_log_no_delete"]) await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).bind().run();
@@ -194,6 +204,7 @@ async function emptyTables(db: BackupDatabase & AuditDatabase & StateDatabase): 
     .filter((line) => !line.trim().startsWith("--"))
     .join("\n");
   for (const statement of state.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
+  await runStatements(db, clientChoiceMigration);
   // Each of these is one statement.
   for (const sql of [attemptsMigration, seenMigration, meterMigration]) {
     await db
@@ -504,13 +515,14 @@ export default {
           .filter((line) => !line.trim().startsWith("--"))
           .join("\n");
         for (const statement of sql.split(";")) if (statement.trim() !== "") await db.prepare(statement).bind().run();
+        await runStatements(db, clientChoiceMigration);
       }
       for (const sql of body.rawSql ?? []) await db.prepare(sql).bind().run();
       const stores: Record<string, Record<string, (...args: never[]) => Promise<unknown>>> = {
         quota: d1QuotaStore(db) as never,
         control: d1ControlStore(db) as never,
         escalations: d1EscalationStore(db) as never,
-        projects: { ...d1ProjectStore(db), put: (record: never, gate: never) => putProjectRecord(db, record, gate) } as never,
+        projects: { ...d1ProjectStore(db), put: (record: never, gate: never) => putProjectRecord(db, record, gate), setChoice: (project: never, choice: never) => setClientChoice(db, project, choice), list: () => listProjectRecords(db) } as never,
         sweep: { counters: (now: never) => sweepQuotaCounters(db, now) } as never,
         stats: d1StatsStore(db) as never,
       };

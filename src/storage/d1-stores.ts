@@ -11,7 +11,7 @@
  * read back in one step, a slot is taken only if one is free, and the
  * switches are written only if nobody else wrote first.
  */
-import { checkProjectRecord, CLIENT_DATA_GATE, ProjectStoreError, type Gate, type ProjectRecord, type ProjectStore } from "../broker/exposure";
+import { checkClientChoice, checkProjectRecord, CLIENT_DATA_GATE, ProjectStoreError, type ClientChoice, type Gate, type ProjectRecord, type ProjectStore } from "../broker/exposure";
 import type { QuotaStore } from "../broker/quotas";
 import type { AttemptState, AttemptStore } from "../code-tool/stored-attempts";
 import type { ExecWardError } from "../contracts/errors";
@@ -213,12 +213,47 @@ export function d1AttemptStore(db: StateDatabase): AttemptStore {
 export function d1ProjectStore(db: StateDatabase): ProjectStore {
   return {
     async get(project) {
-      const row = await db.prepare("SELECT data_class FROM projects WHERE project = ?1").bind(project).first<{ data_class: string }>();
+      const row = await db.prepare("SELECT data_class, client_ai_use, client_limit FROM projects WHERE project = ?1").bind(project).first<ProjectRow>();
       if (row === null) return undefined;
-      if (!DATA_CLASSES.includes(row.data_class as DataClass)) throw new ProjectStoreError("the project's record holds an unknown data class");
-      return { project, dataClass: row.data_class as DataClass };
+      return projectFromRow(project, row);
     },
   };
+}
+
+interface ProjectRow {
+  readonly data_class: string;
+  readonly client_ai_use: string | null;
+  readonly client_limit: string | null;
+}
+
+/** A stored row as a record. Anything in it that is not understood is refused, so a run for it does not start. */
+function projectFromRow(project: string, row: ProjectRow): ProjectRecord {
+  if (!DATA_CLASSES.includes(row.data_class as DataClass)) throw new ProjectStoreError("the project's record holds an unknown data class");
+  if (row.client_ai_use === null && row.client_limit === null) return { project, dataClass: row.data_class as DataClass };
+  if (row.client_ai_use !== null && row.client_ai_use !== "off") throw new ProjectStoreError("the project's record holds an unknown client choice");
+  if (row.client_limit !== null && !DATA_CLASSES.includes(row.client_limit as DataClass)) throw new ProjectStoreError("the project's record holds an unknown client limit");
+  const clientChoice: ClientChoice = { aiUse: row.client_ai_use === "off" ? "off" : "on", ...(row.client_limit === null ? {} : { limit: row.client_limit as DataClass }) };
+  return { project, dataClass: row.data_class as DataClass, clientChoice };
+}
+
+/** Every project with a record, by name. For the owner's console. */
+export async function listProjectRecords(db: StateDatabase): Promise<ProjectRecord[]> {
+  const { results } = await db.prepare("SELECT project, data_class, client_ai_use, client_limit FROM projects ORDER BY project").all<ProjectRow & { project: string }>();
+  return results.map((row) => projectFromRow(row.project, row));
+}
+
+/**
+ * Records what a project's client has asked for. Only for a project that has a record:
+ * returns `false`, and changes nothing, when it has none. The project's own data class
+ * is not touched. `undefined` clears the choice.
+ */
+export async function setClientChoice(db: StateDatabase, project: string, choice: ClientChoice | undefined): Promise<boolean> {
+  if (choice !== undefined) checkClientChoice(choice);
+  const row = await db
+    .prepare("UPDATE projects SET client_ai_use = ?2, client_limit = ?3 WHERE project = ?1 RETURNING project")
+    .bind(project, choice?.aiUse === "off" ? "off" : null, choice?.limit ?? null)
+    .first<{ project: string }>();
+  return row !== null;
 }
 
 /** Sets a project's data class. Refuses client personal data while the gate is uncleared. */
