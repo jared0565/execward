@@ -90,6 +90,26 @@ interface ScheduledBody {
   /** Raise an escalation a day before the first firing, so that it is past its time limit. */
   readonly expiredEscalation?: boolean;
   readonly brokenBucket?: boolean;
+  /** For this many firings, from the first, the statement that removes old audit text is refused. */
+  readonly retentionFailsFor?: number;
+  /** For this many firings, from the first, nothing can be written to the audit log. */
+  readonly auditFailsFor?: number;
+}
+
+/** The database, refusing every statement that matches. */
+function refusing<T extends { prepare(sql: string): unknown }>(db: T, statement: RegExp): T {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (sql: string) => {
+          if (statement.test(sql)) throw new Error("the database refused the statement");
+          return target.prepare(sql);
+        };
+      }
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
 }
 
 interface GithubBody {
@@ -249,7 +269,15 @@ export default {
         }
         let ids = 0;
         const runs = [];
-        for (const at of timer.times) runs.push(await runScheduled({ DB: env.DB, BACKUPS: timer.brokenBucket ? { ...bucket, put: async () => Promise.reject(new Error("the bucket refused the write")) } : bucket }, at, () => `id-${++ids}`));
+        for (const [firing, at] of timer.times.entries()) {
+          const database =
+            firing < (timer.auditFailsFor ?? 0)
+              ? refusing(env.DB, /^INSERT INTO audit_log/)
+              : firing < (timer.retentionFailsFor ?? 0)
+                ? refusing(env.DB, /^UPDATE audit_log SET content = NULL WHERE content IS NOT NULL AND at </)
+                : env.DB;
+          runs.push(await runScheduled({ DB: database, BACKUPS: timer.brokenBucket ? { ...bucket, put: async () => Promise.reject(new Error("the bucket refused the write")) } : bucket }, at, () => `id-${++ids}`));
+        }
         const entries = await store.all();
         return Response.json({
           runs,

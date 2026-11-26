@@ -30,6 +30,18 @@ The Worker still has no public address and holds no credential.
 The day's backup is the marker that the daily round is done. If the backup fails, the
 next firing tries again, so a failed round mends itself within five minutes.
 
+A backup that worked does not mean every job did (changed 2026-11-26 after two review
+findings). When retention, the counter sweep or the stats trim fails, a note is left
+beside the day's backup (`backups/<day>.json.retry`, job names only) and each later
+firing runs those three jobs again until they work, then deletes the note. Only those
+three: they remove what is past its time and are safe to repeat. The digest and the
+reviewer's check are not done twice. The note is deleted with its backup after seven
+days if the jobs never worked.
+
+A daily round is recorded in the audit log before it starts as well as after. If the
+first record cannot be written, the round deletes nothing and takes no backup, and the
+next firing tries again.
+
 Each daily round is written to the audit log as counts. A frequent round is written only
 when it did something or failed.
 
