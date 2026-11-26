@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fakeToken } from "../src/adversarial/fixtures";
 import { schemaProblems, checkAgainstSchema } from "../src/broker/json-schema";
-import { GITHUB_API, GITHUB_TOOL_DEFINITIONS, githubPinsAndPolicy, githubRequestUrl, githubUpstream, MAX_GITHUB_REPLY_BYTES } from "../src/connectors/github";
+import { GITHUB_API, GITHUB_METADATA_ONLY_TOOLS, GITHUB_TOOL_DEFINITIONS, githubPinsAndPolicy, githubRequestUrl, githubUpstream, MAX_GITHUB_REPLY_BYTES } from "../src/connectors/github";
 import { policyRecordSchema, type PolicyRecord } from "../src/contracts/policy";
 import { GITHUB_READ_ONLY_TOOLS } from "../src/tools/github-inventory";
 
@@ -100,8 +100,8 @@ describe("the address a call reaches", () => {
 
 describe("what the connector sends and returns", () => {
   it("sends one GET to GitHub with the credential in a header, and follows no redirect", async () => {
-    const { sent, upstream } = connector();
-    expect(await upstream({ record: await recordFor("get_repository"), args: { owner: "octo", repo: "demo" } })).toEqual({ ok: true });
+    const { sent, upstream } = connector(() => Response.json({ full_name: "octo/demo" }));
+    expect(await upstream({ record: await recordFor("get_repository"), args: { owner: "octo", repo: "demo" } })).toEqual({ full_name: "octo/demo" });
     expect(sent.length).toBe(1);
     expect(sent[0]?.url).toBe(`${GITHUB_API}/repos/octo/demo`);
     expect(sent[0]?.init).toMatchObject({ method: "GET", redirect: "manual", headers: { authorization: `Bearer ${TOKEN}`, "user-agent": "execward" } });
@@ -109,7 +109,8 @@ describe("what the connector sends and returns", () => {
   });
 
   it("uses GET for every tool", async () => {
-    const { sent, upstream } = connector();
+    // A list for the tools that list, an object for the rest: a reply of the wrong kind is refused.
+    const { sent, upstream } = connector((url) => Response.json(/\/(branches|commits|issues|pulls|releases)(\?|$)/.test(url) ? [] : {}));
     const args: Record<string, unknown> = { owner: "octo", repo: "demo", ref: "main", path: "README.md", q: "x", issue_number: 1, pull_number: 1 };
     for (const definition of GITHUB_TOOL_DEFINITIONS) {
       const wanted = Object.keys((definition.inputSchema as { properties: Record<string, unknown> }).properties);
@@ -180,5 +181,154 @@ describe("what the connector sends and returns", () => {
     const { sent, upstream } = connector();
     await expect(upstream({ record: { ...(await recordFor("get_repository")), server: "slack" }, args: {} })).rejects.toThrow('was given a call for "slack"');
     expect(sent).toEqual([]);
+  });
+});
+
+// A tool that is not marked sensitive is classed `internal`, and a read of it does not stop a later
+// outbound call. GitHub's own reply for a list holds free text written by people (an issue's body, a
+// pull request's description, release notes, a whole commit message), so the connector hands over
+// only the named fields. (aramid review finding on src/tools/github-inventory.ts, 2026-11-26.)
+describe("what a tool that is not marked sensitive hands over", () => {
+  const SECRET_TEXT = "CLIENT-MATERIAL the client's unreleased pricing";
+  const where = { owner: "octo", repo: "demo" };
+
+  async function handedOver(tool: string, reply: unknown, args: Record<string, unknown> = where): Promise<unknown> {
+    const { upstream } = connector(() => Response.json(reply));
+    return upstream({ record: await recordFor(tool), args });
+  }
+
+  it("has a list of fields for every such tool, and for no sensitive one", () => {
+    const plain = GITHUB_READ_ONLY_TOOLS.filter((tool) => !tool.sensitive).map((tool) => tool.tool).sort();
+    expect(plain).toEqual(["get_repository", "list_branches", "list_commits", "list_issues", "list_pull_requests", "list_releases", "list_workflow_runs"]);
+    expect([...GITHUB_METADATA_ONLY_TOOLS].sort()).toEqual(plain);
+  });
+
+  it("gives an issue's number, title, state, labels and people, and not its body", async () => {
+    const out = await handedOver("list_issues", [
+      {
+        number: 7,
+        title: "Checkout fails",
+        state: "open",
+        body: SECRET_TEXT,
+        body_text: SECRET_TEXT,
+        comments: 3,
+        created_at: "2026-11-01T00:00:00Z",
+        html_url: "https://github.com/octo/demo/issues/7",
+        user: { login: "ada", email: "ada@example.com", bio: SECRET_TEXT },
+        labels: [{ name: "bug", description: SECRET_TEXT }],
+        assignees: [{ login: "bo", site_admin: false }],
+        milestone: { title: "v2", number: 1, description: SECRET_TEXT },
+        pull_request: { html_url: "https://github.com/octo/demo/pull/7", merged_at: null },
+        reactions: { total_count: 1 },
+      },
+    ]);
+    expect(out).toEqual([
+      {
+        number: 7,
+        title: "Checkout fails",
+        state: "open",
+        comments: 3,
+        created_at: "2026-11-01T00:00:00Z",
+        html_url: "https://github.com/octo/demo/issues/7",
+        user: { login: "ada" },
+        labels: [{ name: "bug" }],
+        assignees: [{ login: "bo" }],
+        milestone: { title: "v2", number: 1 },
+        pull_request: { html_url: "https://github.com/octo/demo/pull/7", merged_at: null },
+      },
+    ]);
+  });
+
+  it("gives a pull request's number, title, state, branches and author, and not its description", async () => {
+    const out = await handedOver("list_pull_requests", [
+      {
+        number: 9,
+        title: "Add totals",
+        state: "open",
+        draft: false,
+        body: SECRET_TEXT,
+        user: { login: "ada" },
+        head: { ref: "totals", sha: "abc", label: "octo:totals", repo: { full_name: "octo/demo", description: SECRET_TEXT } },
+        base: { ref: "main", sha: "def", label: "octo:main", repo: { full_name: "octo/demo" } },
+        merged_at: null,
+      },
+    ]);
+    expect(out).toEqual([
+      {
+        number: 9,
+        title: "Add totals",
+        state: "open",
+        draft: false,
+        user: { login: "ada" },
+        head: { ref: "totals", sha: "abc", label: "octo:totals", repo: { full_name: "octo/demo" } },
+        base: { ref: "main", sha: "def", label: "octo:main", repo: { full_name: "octo/demo" } },
+        merged_at: null,
+      },
+    ]);
+  });
+
+  it("gives a release's tag, name and dates, and not its notes", async () => {
+    const out = await handedOver("list_releases", [{ id: 1, tag_name: "v1.0.0", name: "First", draft: false, prerelease: false, published_at: "2026-11-02T00:00:00Z", body: SECRET_TEXT, author: { login: "ada" } }]);
+    expect(out).toEqual([{ id: 1, tag_name: "v1.0.0", name: "First", draft: false, prerelease: false, published_at: "2026-11-02T00:00:00Z", author: { login: "ada" } }]);
+  });
+
+  it("gives a commit's SHA, author, date and the first line of its message", async () => {
+    const out = await handedOver("list_commits", [
+      {
+        sha: "abc",
+        html_url: "https://github.com/octo/demo/commit/abc",
+        commit: { author: { name: "Ada", email: "ada@example.com", date: "2026-11-03T00:00:00Z" }, message: `Fix the totals\r\n\r\n${SECRET_TEXT}`, comment_count: 0 },
+        author: { login: "ada", id: 5 },
+        parents: [{ sha: "000", url: "https://api.github.com/x" }],
+      },
+      { sha: "def", commit: { author: { name: "Bo", date: "2026-11-04T00:00:00Z" }, message: "x".repeat(500) }, author: null },
+    ]);
+    expect(out).toEqual([
+      {
+        sha: "abc",
+        html_url: "https://github.com/octo/demo/commit/abc",
+        commit: { author: { name: "Ada", date: "2026-11-03T00:00:00Z" }, message: "Fix the totals", comment_count: 0 },
+        author: { login: "ada" },
+        parents: [{ sha: "000" }],
+      },
+      { sha: "def", commit: { author: { name: "Bo", date: "2026-11-04T00:00:00Z" }, message: "x".repeat(200) }, author: null },
+    ]);
+  });
+
+  it("gives a CI run's status, branch and timing, and only the first line of its commit's message", async () => {
+    const out = await handedOver("list_workflow_runs", {
+      total_count: 1,
+      workflow_runs: [
+        { id: 4, name: "CI", display_title: "Add totals", status: "completed", conclusion: "success", head_branch: "main", head_sha: "abc", run_number: 12, created_at: "2026-11-05T00:00:00Z", head_commit: { id: "abc", message: `Add totals\n\n${SECRET_TEXT}`, author: { email: "ada@example.com" } }, repository: { description: SECRET_TEXT } },
+      ],
+    });
+    expect(out).toEqual({
+      total_count: 1,
+      workflow_runs: [{ id: 4, name: "CI", display_title: "Add totals", status: "completed", conclusion: "success", head_branch: "main", head_sha: "abc", run_number: 12, created_at: "2026-11-05T00:00:00Z", head_commit: { id: "abc", message: "Add totals" } }],
+    });
+  });
+
+  it("gives a repository's and a branch's details without anything nested it has no field for", async () => {
+    const repository = await handedOver("get_repository", { id: 1, name: "demo", full_name: "octo/demo", private: true, visibility: "private", default_branch: "main", topics: ["shop", { odd: SECRET_TEXT }], open_issues_count: 2, owner: { login: "octo", email: "o@example.com" }, license: { spdx_id: "MIT", body: SECRET_TEXT }, template_repository: { description: SECRET_TEXT } });
+    expect(repository).toEqual({ id: 1, name: "demo", full_name: "octo/demo", private: true, visibility: "private", default_branch: "main", topics: ["shop"], open_issues_count: 2, owner: { login: "octo" }, license: { spdx_id: "MIT" } });
+    const branches = await handedOver("list_branches", [{ name: "main", protected: true, commit: { sha: "abc", url: "https://api.github.com/x" }, protection: { note: SECRET_TEXT } }]);
+    expect(branches).toEqual([{ name: "main", protected: true, commit: { sha: "abc" } }]);
+  });
+
+  it("hands over nothing a person wrote at length, whatever field GitHub puts it in", async () => {
+    const anywhere = { body: SECRET_TEXT, description_html: SECRET_TEXT, note: SECRET_TEXT, nested: { deeper: [SECRET_TEXT] } };
+    for (const tool of ["list_issues", "list_pull_requests", "list_releases", "list_commits", "list_branches"]) {
+      expect(JSON.stringify(await handedOver(tool, [{ ...anywhere, user: anywhere, commit: anywhere, head: anywhere, author: anywhere }])), tool).not.toContain("CLIENT-MATERIAL");
+    }
+  });
+
+  it("refuses a reply that is not the kind of thing the tool lists", async () => {
+    await expect(handedOver("list_issues", { message: SECRET_TEXT })).rejects.toThrow("GitHub's reply is not in the form this tool reads");
+    await expect(handedOver("list_workflow_runs", [1, 2])).rejects.toThrow("GitHub's reply is not in the form this tool reads");
+  });
+
+  it("leaves a sensitive tool's reply as GitHub gave it", async () => {
+    const issue = { number: 7, title: "Checkout fails", body: SECRET_TEXT };
+    expect(await handedOver("get_issue", issue, { ...where, issue_number: 7 })).toEqual(issue);
   });
 });

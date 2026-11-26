@@ -235,6 +235,195 @@ export interface GithubConnectorDeps {
   readonly fetch: (url: string, init: { method: "GET"; headers: Record<string, string>; redirect: "manual" }) => Promise<Response>;
 }
 
+/**
+ * Which parts of GitHub's reply a tool hands over, for the tools that are not marked
+ * sensitive. Their policy says they return names, numbers, states and titles, and a read
+ * of one does not stop a later outbound call (FR-29). GitHub's reply holds more: an
+ * issue's body, a pull request's description, release notes, whole commit messages,
+ * email addresses. So the reply is not passed on. A copy is built that holds the fields
+ * named here and nothing else, in the places GitHub puts them, so a script written for
+ * GitHub's own form still reads them.
+ *
+ *   "value"       text, a number, true, false or null
+ *   "values"      a list of those
+ *   "first_line"  the first line of some text, at most `TITLE_CHARS` long: a title
+ *   { ... }       an object, with these fields of it
+ *   [shape]       a list, each item in this form
+ */
+type Shape = "value" | "values" | "first_line" | { readonly [field: string]: Shape } | readonly [Shape];
+
+/** The longest title handed over. */
+const TITLE_CHARS = 200;
+
+const PERSON: Shape = { login: "value" };
+const PEOPLE: Shape = [PERSON];
+const LABELS: Shape = [{ name: "value" }];
+const MILESTONE: Shape = { title: "value", number: "value", state: "value", due_on: "value" };
+const BRANCH_END: Shape = { ref: "value", sha: "value", label: "value", repo: { full_name: "value" } };
+const SIGNER: Shape = { name: "value", date: "value" };
+
+const SHAPES: Readonly<Record<string, Shape>> = {
+  get_repository: {
+    id: "value",
+    name: "value",
+    full_name: "value",
+    private: "value",
+    visibility: "value",
+    fork: "value",
+    archived: "value",
+    disabled: "value",
+    default_branch: "value",
+    description: "first_line",
+    language: "value",
+    topics: "values",
+    html_url: "value",
+    created_at: "value",
+    updated_at: "value",
+    pushed_at: "value",
+    size: "value",
+    stargazers_count: "value",
+    watchers_count: "value",
+    forks_count: "value",
+    open_issues_count: "value",
+    subscribers_count: "value",
+    has_issues: "value",
+    has_wiki: "value",
+    has_discussions: "value",
+    owner: { login: "value", type: "value" },
+    license: { spdx_id: "value", name: "value" },
+  },
+  list_branches: [{ name: "value", protected: "value", commit: { sha: "value" } }],
+  list_commits: [
+    {
+      sha: "value",
+      html_url: "value",
+      commit: { author: SIGNER, committer: SIGNER, message: "first_line", comment_count: "value" },
+      author: PERSON,
+      committer: PERSON,
+      parents: [{ sha: "value" }],
+    },
+  ],
+  list_issues: [
+    {
+      number: "value",
+      title: "first_line",
+      state: "value",
+      state_reason: "value",
+      locked: "value",
+      draft: "value",
+      comments: "value",
+      created_at: "value",
+      updated_at: "value",
+      closed_at: "value",
+      html_url: "value",
+      author_association: "value",
+      user: PERSON,
+      assignee: PERSON,
+      assignees: PEOPLE,
+      labels: LABELS,
+      milestone: MILESTONE,
+      pull_request: { html_url: "value", merged_at: "value" },
+    },
+  ],
+  list_pull_requests: [
+    {
+      number: "value",
+      title: "first_line",
+      state: "value",
+      locked: "value",
+      draft: "value",
+      created_at: "value",
+      updated_at: "value",
+      closed_at: "value",
+      merged_at: "value",
+      merge_commit_sha: "value",
+      html_url: "value",
+      author_association: "value",
+      user: PERSON,
+      assignee: PERSON,
+      assignees: PEOPLE,
+      requested_reviewers: PEOPLE,
+      labels: LABELS,
+      milestone: MILESTONE,
+      head: BRANCH_END,
+      base: BRANCH_END,
+    },
+  ],
+  list_releases: [
+    {
+      id: "value",
+      tag_name: "value",
+      name: "first_line",
+      target_commitish: "value",
+      draft: "value",
+      prerelease: "value",
+      created_at: "value",
+      published_at: "value",
+      html_url: "value",
+      author: PERSON,
+      assets: [{ name: "value", size: "value", content_type: "value", download_count: "value", created_at: "value", updated_at: "value" }],
+    },
+  ],
+  list_workflow_runs: {
+    total_count: "value",
+    workflow_runs: [
+      {
+        id: "value",
+        name: "first_line",
+        display_title: "first_line",
+        run_number: "value",
+        run_attempt: "value",
+        event: "value",
+        status: "value",
+        conclusion: "value",
+        workflow_id: "value",
+        path: "value",
+        head_branch: "value",
+        head_sha: "value",
+        created_at: "value",
+        updated_at: "value",
+        run_started_at: "value",
+        html_url: "value",
+        actor: PERSON,
+        triggering_actor: PERSON,
+        head_commit: { id: "value", message: "first_line", timestamp: "value" },
+        pull_requests: [{ number: "value" }],
+      },
+    ],
+  },
+};
+
+/** The tools whose reply is cut down to named fields: every tool that is not marked sensitive. */
+export const GITHUB_METADATA_ONLY_TOOLS: ReadonlySet<string> = new Set(Object.keys(SHAPES));
+
+/** Marks a part that is not handed over. `undefined` cannot serve: JSON has no such value, and `null` is a real one. */
+const LEFT_OUT = Symbol("left out");
+
+const isPlain = (value: unknown): value is string | number | boolean | null => value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+
+function shaped(value: unknown, shape: Shape): unknown {
+  if (shape === "value") return isPlain(value) ? value : LEFT_OUT;
+  if (shape === "values") return Array.isArray(value) ? value.filter(isPlain) : LEFT_OUT;
+  if (shape === "first_line") {
+    if (value === null) return null;
+    return typeof value === "string" ? (value.split(/\r?\n/, 1)[0] ?? "").slice(0, TITLE_CHARS) : LEFT_OUT;
+  }
+  if (Array.isArray(shape)) {
+    if (!Array.isArray(value)) return LEFT_OUT;
+    const each = (shape as readonly [Shape])[0];
+    return value.map((item) => shaped(item, each)).filter((item) => item !== LEFT_OUT);
+  }
+  if (value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) return LEFT_OUT;
+  const out: Record<string, unknown> = {};
+  for (const [field, inner] of Object.entries(shape as { readonly [field: string]: Shape })) {
+    if (!Object.hasOwn(value, field)) continue;
+    const kept = shaped((value as Record<string, unknown>)[field], inner);
+    if (kept !== LEFT_OUT) out[field] = kept;
+  }
+  return out;
+}
+
 function decodeBase64(text: string): string | undefined {
   try {
     const bytes = Uint8Array.from(atob(text.replace(/\s+/g, "")), (char) => char.charCodeAt(0));
@@ -292,6 +481,15 @@ export function githubUpstream(deps: GithubConnectorDeps): Upstream {
       const text = file.encoding === "base64" && typeof file.content === "string" ? decodeBase64(file.content) : undefined;
       return { type: file.type, path: file.path, sha: file.sha, size: file.size, ...(text === undefined ? { content: null, binary: true } : { content: text }) };
     }
-    return parsed;
+    const shape = SHAPES[record.tool];
+    // A sensitive tool's reply is handed over as it is: the run is then held to the rules for sensitive data.
+    if (shape === undefined) {
+      if (!record.sensitive) throw new UpstreamToolError("this tool is not marked sensitive and has no list of fields to hand over");
+      return parsed;
+    }
+    const kept = shaped(parsed, shape);
+    // A list where an object was expected, or the other way round. Nothing of it is passed on.
+    if (kept === LEFT_OUT || kept === null) throw new UpstreamToolError("GitHub's reply is not in the form this tool reads");
+    return kept;
   };
 }
