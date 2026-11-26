@@ -85,6 +85,30 @@ describe("a project's data class (FR-32)", () => {
     }
   });
 
+  it("gives a run the lowest of the project's class, the provider's ceiling and the client's limit", async () => {
+    const classes: DataClass[] = ["public", "internal", "confidential"];
+    for (const dataClass of classes) {
+      for (const limit of classes) {
+        const store = memoryProjectStore([{ project: "p", dataClass, clientChoice: { aiUse: "on", limit } }]);
+        const found = await exposureFor(store, "p", "anthropic_api_commercial");
+        const lowest = classes[Math.min(classes.indexOf(dataClass), classes.indexOf(limit))];
+        expect(found, `${dataClass} with limit ${limit}`).toMatchObject({ projectClass: dataClass, clientLimit: limit, allowed: lowest });
+      }
+    }
+    // A limit above a personal plan's ceiling does not lift that ceiling.
+    const store = memoryProjectStore([{ project: "p", dataClass: "confidential", clientChoice: { aiUse: "on", limit: "confidential" } }]);
+    expect((await exposureFor(store, "p", "claude_personal_plan")).allowed).toBe("internal");
+    // No limit set: nothing about a client limit is reported.
+    expect(await exposureFor(memoryProjectStore([{ project: "p", dataClass: "internal", clientChoice: { aiUse: "on" } }]), "p", "unknown")).not.toHaveProperty("clientLimit");
+  });
+
+  it("refuses a client choice that is not one it knows, when written and when read", async () => {
+    expect(() => checkProjectRecord({ project: "p", dataClass: "internal", clientChoice: { aiUse: "maybe" as never } })).toThrow('"maybe" is not a choice for AI use');
+    expect(() => checkProjectRecord({ project: "p", dataClass: "internal", clientChoice: { aiUse: "on", limit: "secret" as never } })).toThrow('"secret" is not a data class');
+    const behindItsBack: ProjectStore = { get: async () => ({ project: "p", dataClass: "internal", clientChoice: { aiUse: "on", limit: "secret" as never } }) };
+    await expect(exposureFor(behindItsBack, "p", "unknown")).rejects.toThrow("the project's record holds an unknown client limit");
+  });
+
   it("treats a project with no record as public", async () => {
     expect(await exposureFor(projects, "never-heard-of-it", "anthropic_api_commercial")).toEqual({
       provider: "anthropic_api_commercial",
@@ -245,6 +269,56 @@ describe("the code tool with every control in place", () => {
     const output = await serve(input("never-set-up"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
     expect(output).toMatchObject({ status: "error", error: { code: "policy_denied" } });
     expect(upstreamCalls).toEqual([]);
+  });
+
+  describe("what the project's client has asked for (the client notice, \"Your choices\")", () => {
+    const chosen = (clientChoice: { aiUse: "on" | "off"; limit?: DataClass }) => ({
+      projects: memoryProjectStore([{ project: "client", dataClass: "confidential", clientChoice }]),
+    });
+
+    it("runs nothing for a project whose client has asked for no AI use, and says why", async () => {
+      let executed = 0;
+      const counting: Executor = { name: "scripted", execute: async () => (executed++, { status: "completed", result: 1, logs: [], truncated: false }) };
+      const { serve, logged, upstreamCalls } = service(counting, chosen({ aiUse: "off" }));
+      const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
+      expect(output).toMatchObject({ status: "refused", error: { code: "policy_denied", message: expect.stringContaining("the client of this project has asked that AI tools are not used on it") as string } });
+      expect(executed).toBe(0);
+      expect(upstreamCalls).toEqual([]);
+      expect(logged()).toMatchObject([{ kind: "run_refused" }]);
+    });
+
+    it("still runs a project whose client has left AI use on", async () => {
+      const { serve } = service(calling("github_get_file"), chosen({ aiUse: "on" }));
+      const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
+      expect(output).toMatchObject({ status: "completed", dataClass: "confidential" });
+    });
+
+    it("holds a run to the client's limit when it is lower than the project's class, before the file is read", async () => {
+      const { serve, upstreamCalls, logged } = service(calling("github_list_issues", "github_get_file"), chosen({ aiUse: "on", limit: "internal" }));
+      const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
+      expect(output).toMatchObject({ status: "error", error: { code: "policy_denied", message: expect.stringContaining("this run may only handle internal data") as string } });
+      expect(JSON.stringify(output)).not.toContain("CANARY");
+      expect(upstreamCalls).toEqual(["list_issues"]);
+      expect(logged()[0]).toMatchObject({ kind: "run_started", allowedDataClass: "internal" });
+    });
+
+    it("never lets a client's limit raise what a run gets", async () => {
+      // The project is internal; a client limit of confidential changes nothing.
+      const projects = memoryProjectStore([{ project: "work", dataClass: "internal", clientChoice: { aiUse: "on", limit: "confidential" } }]);
+      const { serve, upstreamCalls } = service(calling("github_get_file"), { projects });
+      const output = await serve(input("work"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
+      expect(output).toMatchObject({ status: "error", error: { code: "policy_denied" } });
+      expect(upstreamCalls).toEqual([]);
+    });
+
+    it("reads the project's record once for a call, so one reading settles the whole run", async () => {
+      let reads = 0;
+      const inner = memoryProjectStore([{ project: "client", dataClass: "confidential" }]);
+      const { serve } = service(calling("github_get_file"), { requireKnownProject: true, projects: { get: (project) => (reads++, inner.get(project)) } });
+      const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
+      expect(output.status).toBe("completed");
+      expect(reads).toBe(1);
+    });
   });
 
   it("does not start a run when the project's record cannot be read", async () => {

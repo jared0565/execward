@@ -210,6 +210,56 @@ describe("database-backed stores, on a local D1 database", { timeout: 30_000 }, 
       expect(values(reply)).toEqual([null, { project: "work", dataClass: "internal" }, null, null, { project: "work", dataClass: "confidential" }]);
     });
 
+    it("stores what a project's client has asked for, and only for a project with a record", async () => {
+      const reply = await stores([
+        ["projects", "put", { project: "acme", dataClass: "confidential" }],
+        ["projects", "setChoice", "acme", { aiUse: "off" }],
+        ["projects", "get", "acme"],
+        ["projects", "setChoice", "acme", { aiUse: "on", limit: "internal" }],
+        ["projects", "get", "acme"],
+        ["projects", "setChoice", "never-set-up", { aiUse: "off" }],
+        ["projects", "get", "never-set-up"],
+        ["projects", "setChoice", "acme", { aiUse: "on", limit: "secret" }],
+        ["projects", "list"],
+      ]);
+      expect(values(reply)).toEqual([
+        null,
+        true,
+        { project: "acme", dataClass: "confidential", clientChoice: { aiUse: "off" } },
+        true,
+        { project: "acme", dataClass: "confidential", clientChoice: { aiUse: "on", limit: "internal" } },
+        // No record: nothing is written, and no record appears.
+        false,
+        null,
+        'error: "secret" is not a data class',
+        [{ project: "acme", dataClass: "confidential", clientChoice: { aiUse: "on", limit: "internal" } }],
+      ]);
+    });
+
+    it("keeps the client's choice when the project's data class is set again, and clears it only when asked", async () => {
+      const reply = await stores([
+        ["projects", "put", { project: "acme", dataClass: "confidential" }],
+        ["projects", "setChoice", "acme", { aiUse: "off", limit: "public" }],
+        // Setup scripts write the class again on every run. The choice must outlive that.
+        ["projects", "put", { project: "acme", dataClass: "internal" }],
+        ["projects", "get", "acme"],
+        ["projects", "setChoice", "acme"],
+        ["projects", "get", "acme"],
+      ]);
+      expect(values(reply).slice(3)).toEqual([{ project: "acme", dataClass: "internal", clientChoice: { aiUse: "off", limit: "public" } }, true, { project: "acme", dataClass: "internal" }]);
+    });
+
+    it("refuses to read a record whose client choice is not one it knows, so a run for it does not start", async () => {
+      const reply = await stores(
+        [
+          ["projects", "get", "odd-use"],
+          ["projects", "get", "odd-limit"],
+        ],
+        { rawSql: ["INSERT INTO projects (project, data_class, client_ai_use) VALUES ('odd-use', 'internal', 'sometimes')", "INSERT INTO projects (project, data_class, client_limit) VALUES ('odd-limit', 'internal', 'secret')"] },
+      );
+      expect(values(reply)).toEqual(["error: the project's record holds an unknown client choice", "error: the project's record holds an unknown client limit"]);
+    });
+
     it("refuses to set a project to client personal data while the gate is uncleared", async () => {
       const reply = await stores([
         ["projects", "put", { project: "acme", dataClass: "client_personal" }],

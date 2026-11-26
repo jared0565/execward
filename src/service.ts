@@ -9,7 +9,7 @@
  */
 import { auditLog, type AuditStore } from "./audit/log";
 import { brokerHost, type ToolDefinition, type Upstream } from "./broker/broker";
-import { exposureFor, type Exposure, type Gate, type ProjectStore, CLIENT_DATA_GATE } from "./broker/exposure";
+import { exposureFor, type Exposure, type Gate, type ProjectRecord, type ProjectStore, CLIENT_DATA_GATE, CLIENT_OPTED_OUT_MESSAGE } from "./broker/exposure";
 import type { PolicyStore } from "./broker/policy-store";
 import { admitRun, releaseRun, type QuotaStore } from "./broker/quotas";
 import type { AttemptGate } from "./code-tool/attempts";
@@ -18,6 +18,7 @@ import type { MeterFactory } from "./meter/meter";
 import type { MetricsSink } from "./metrics/metrics";
 import { runCodeTool, type CodeToolDeps } from "./code-tool/run";
 import type { CodeToolOutput } from "./contracts/code-tool";
+import type { ExecWardError } from "./contracts/errors";
 import type { PolicyRecord } from "./contracts/policy";
 import type { ExecutionLimits, Executor } from "./executor";
 
@@ -108,15 +109,42 @@ export type CodeToolService = (rawInput: unknown, caller: CallerContext) => Prom
 export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
   const audit = auditLog(deps.audit, deps.now);
   return async (rawInput, caller) => {
+    // The project's record is read once per call and that one reading settles everything
+    // about it: whether it exists, what its client has asked for, and what it may handle.
+    const projectReads = new Map<string, Promise<ProjectRecord | undefined>>();
+    const projects: ProjectStore = {
+      get(project) {
+        let read = projectReads.get(project);
+        if (!read) {
+          read = deps.projects.get(project);
+          projectReads.set(project, read);
+        }
+        return read;
+      },
+    };
     // Worked out once per run and shared, so the broker and the reply use the same answer.
     const exposures = new Map<string, Promise<Exposure>>();
     const exposure = (project: string): Promise<Exposure> => {
       let found = exposures.get(project);
       if (!found) {
-        found = exposureFor(deps.projects, project, caller.providerRoute, deps.gate ?? CLIENT_DATA_GATE);
+        found = exposureFor(projects, project, caller.providerRoute, deps.gate ?? CLIENT_DATA_GATE);
         exposures.set(project, found);
       }
       return found;
+    };
+    const switches = runGate(deps.control);
+    // The owner's switches first, then the client's own choice. Either one stops the run before it starts.
+    const mayStart = async (project: string): Promise<ExecWardError | undefined> => {
+      const stopped = await switches(project);
+      if (stopped) return stopped;
+      let record: ProjectRecord | undefined;
+      try {
+        record = await projects.get(project);
+      } catch {
+        // Not knowing what the client asked for is treated as a refusal.
+        return { code: "policy_denied", message: "the project's data class could not be read, so the run was not started" };
+      }
+      return record?.clientChoice?.aiUse === "off" ? { code: "policy_denied", message: CLIENT_OPTED_OUT_MESSAGE } : undefined;
     };
     const quotaContext = (project: string) => ({ store: deps.quotas, project, now: deps.now });
 
@@ -132,8 +160,8 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       ...(deps.onCrossCheckDisagreement ? { onCrossCheckDisagreement: deps.onCrossCheckDisagreement } : {}),
       ...(deps.review ? { review: deps.review } : {}),
       ...(deps.netSaving ? { netSaving: deps.netSaving } : {}),
-      control: runGate(deps.control),
-      ...(deps.requireKnownProject ? { projectKnown: async (project: string) => (await deps.projects.get(project)) !== undefined } : {}),
+      control: mayStart,
+      ...(deps.requireKnownProject ? { projectKnown: async (project: string) => (await projects.get(project)) !== undefined } : {}),
       exposure,
       admission: {
         admit: (run) => admitRun(quotaContext(run.project), run.runId, run.wallClockMs),

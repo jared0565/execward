@@ -11,7 +11,8 @@
  *     terms is approved; a personal plan of the same provider is not
  *     (docs/research/0.1.6-provider-data-terms.md).
  *
- * A run is allowed the lower of the two.
+ * A run is allowed the lower of the two. The project's client can lower it
+ * further, or ask for no AI use at all (`ClientChoice`).
  */
 import { DATA_CLASSES, type DataClass } from "../contracts/policy";
 
@@ -72,10 +73,33 @@ export class ProjectStoreError extends Error {
   override readonly name = "ProjectStoreError";
 }
 
+/**
+ * What the project's client has asked for (the client notice, "Your choices"). A client
+ * can ask that AI tools are not used on their work, or that they see less. A choice only
+ * ever tightens: it cannot give a run more than the project's own class allows.
+ */
+export interface ClientChoice {
+  /** `off`: the client has asked that AI tools are not used on this project. No run starts. */
+  readonly aiUse: "on" | "off";
+  /** The highest data class the client lets AI tools handle. Left out, the project's own class stands. */
+  readonly limit?: DataClass;
+}
+
+/** What a run is told when the project's client has asked for no AI use. Fixed words. */
+export const CLIENT_OPTED_OUT_MESSAGE = "the client of this project has asked that AI tools are not used on it, so nothing was run. Only the owner can change this";
+
 export interface ProjectRecord {
   readonly project: string;
   /** The highest data class this project's runs may handle. */
   readonly dataClass: DataClass;
+  /** Absent until a choice is recorded for the project's client. */
+  readonly clientChoice?: ClientChoice;
+}
+
+/** Refuses a client choice that is not in a form the service can act on. Call it wherever one is written or read. */
+export function checkClientChoice(choice: ClientChoice): void {
+  if (choice.aiUse !== "on" && choice.aiUse !== "off") throw new ProjectStoreError(`"${String(choice.aiUse)}" is not a choice for AI use`);
+  if (choice.limit !== undefined && !DATA_CLASSES.includes(choice.limit)) throw new ProjectStoreError(`"${String(choice.limit)}" is not a data class`);
 }
 
 /** Refuses a project record the gate does not allow. Call it wherever a record is written. */
@@ -84,6 +108,7 @@ export function checkProjectRecord(record: ProjectRecord, gate: Gate = CLIENT_DA
   if (record.dataClass === "client_personal" && !gate.cleared) {
     throw new ProjectStoreError(`the project "${record.project}" cannot be set to client personal data until gate ${CLIENT_DATA_GATE.task} is cleared`);
   }
+  if (record.clientChoice !== undefined) checkClientChoice(record.clientChoice);
 }
 
 export interface ProjectStore {
@@ -104,7 +129,9 @@ export interface Exposure {
   /** The project's own class. `public` when the project has no record (FR-32). */
   readonly projectClass: DataClass;
   readonly providerCeiling: DataClass;
-  /** The lower of the two: what this run may handle and return. */
+  /** The limit the project's client set, when they set one. */
+  readonly clientLimit?: DataClass;
+  /** The lowest of them: what this run may handle and return. */
   readonly allowed: DataClass;
 }
 
@@ -126,5 +153,11 @@ export async function exposureFor(store: ProjectStore, project: string, route: u
   // A record written before the gate, or behind its back, does not get past it.
   if (projectClass === "client_personal" && !gate.cleared) projectClass = "confidential";
   const ceiling = providerCeiling(provider, gate);
-  return { provider, projectClass, providerCeiling: ceiling, allowed: lowerClass(projectClass, ceiling) };
+  const clientLimit = record?.clientChoice?.limit;
+  // A limit that is not a data class is not guessed at: the run does not start.
+  if (clientLimit !== undefined && !DATA_CLASSES.includes(clientLimit)) throw new ProjectStoreError("the project's record holds an unknown client limit");
+  const allowed = lowerClass(projectClass, ceiling);
+  // The client's limit can only lower what the run gets, never raise it.
+  if (clientLimit === undefined) return { provider, projectClass, providerCeiling: ceiling, allowed };
+  return { provider, projectClass, providerCeiling: ceiling, clientLimit, allowed: lowerClass(allowed, clientLimit) };
 }
