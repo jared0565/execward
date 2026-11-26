@@ -38,6 +38,11 @@ export interface McpCaller {
    * (task 2.1.5). Without it each call is counted alone, which is only right for tests.
    */
   readonly attemptsFor?: (project: string) => Promise<AttemptGate>;
+  /**
+   * Whether the named project has a record. When given, a call naming any other project
+   * gets no stored count and no notices; the service must be one that refuses it.
+   */
+  readonly projectKnown?: (project: string) => Promise<boolean>;
   /** Lines to add to the reply: switches that changed since this caller's last call (task 2.1.4). */
   readonly noticesFor?: (project: string) => Promise<readonly string[]>;
   /**
@@ -79,10 +84,13 @@ export function mcpAdapter(deps: { readonly service: CodeToolService }): McpAdap
         const direct = (caller.directTools ?? []).filter((tool) => tool.path !== CODE_TOOL_NAME);
         /** One run of the code tool for this caller, and its reply as the model is given it. */
         const run = async (input: { readonly project: string } & Record<string, unknown>) => {
+          // The project's name is the model's own word. For a name with no record nothing is kept or
+          // looked up: the service refuses the run, and no count or notice is started under that name.
+          const known = caller.projectKnown === undefined ? true : await caller.projectKnown(input.project).catch(() => false);
           // The count of failed runs in a row belongs to the caller and the project, not to this request.
-          const attempts = caller.attemptsFor === undefined ? attemptGate() : await caller.attemptsFor(input.project);
+          const attempts = caller.attemptsFor === undefined || !known ? attemptGate() : await caller.attemptsFor(input.project);
           // Read before the run, so the notice describes the settings this call met.
-          const notices = (await caller.noticesFor?.(input.project).catch(() => [])) ?? [];
+          const notices = known ? ((await caller.noticesFor?.(input.project).catch(() => [])) ?? []) : [];
           const ran = await deps.service(input, { providerRoute: caller.providerRoute, attempts });
           // A run may carry a notice of its own (a held result). Both are kept, within the contract's limit of eight.
           const output = notices.length === 0 ? ran : { ...ran, notices: [...(ran.notices ?? []), ...notices].slice(0, 8) };

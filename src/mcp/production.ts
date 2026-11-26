@@ -126,6 +126,8 @@ export async function productionService(env: McpEnv, now: () => number, labels: 
     executor: dynamicWorkerExecutor(env.LOADER as WorkerLoader),
     policy: d1PolicyStore(env.DB as D1Like),
     projects: d1ProjectStore(db),
+    // Here the project's name is the calling model's own word, so only a project on record is run.
+    requireKnownProject: true,
     quotas: d1QuotaStore(db),
     audit: d1AuditStore(db),
     control: d1ControlStore(db),
@@ -242,5 +244,7 @@ export async function mcpResponse(
     ...(listed.length === 0 ? {} : { directTools: listed }),
     ...(attempts === undefined ? {} : { attemptsFor: attempts }),
     ...(noticesFor === undefined ? {} : { noticesFor }),
+    // Production only: with a service passed in, a test decides what its service knows.
+    ...(service === undefined ? { projectKnown: async (project: string) => (await d1ProjectStore(db as StateDatabase & AuditDatabase).get(project)) !== undefined } : {}),
   });
 }

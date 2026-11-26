@@ -161,8 +161,14 @@ export class Code extends WorkerEntrypoint {
     const describe = (path) => { open(); return host.describe(path); };
     const assert = (condition, message) => {
       if (condition) { assertionsPassed++; return; }
-      const error = new AssertionFailure(message === undefined ? "assertion failed" : String(message));
-      if (!failedAssertion) failedAssertion = { error, value: format(condition).slice(0, 200) };
+      // Turning the message or the value into text can run the script's own code, which may
+      // throw. The failure is recorded whatever that code does.
+      let said = "assertion failed";
+      try { if (message !== undefined) said = String(message).slice(0, 2000); } catch {}
+      const error = new AssertionFailure(said);
+      let shown = "";
+      try { shown = format(condition).slice(0, 200); } catch {}
+      if (!failedAssertion) failedAssertion = { error, value: shown };
       throw error;
     };
     // FR-43: a critical figure is only written down here. The host works it out again
@@ -209,8 +215,12 @@ export class Code extends WorkerEntrypoint {
       try {
         resultJson = JSON.stringify(value === undefined ? null : value);
       } catch (error) {
-        return { status: "failed", kind: "script_error", message: "the final value cannot be written as JSON: " + String(error && error.message), assertionsPassed, logs, globalsLeft };
+        if (failedAssertion) return assertionReport();
+        return { status: "failed", kind: "script_error", message: ("the final value cannot be written as JSON: " + String(error && error.message)).slice(0, 2000), assertionsPassed, logs, globalsLeft };
       }
+      // Writing the value as JSON can run the script's own code (a toJSON method). An assertion
+      // that failed there, caught or not, still failed.
+      if (failedAssertion) return assertionReport();
       if (resultJson === undefined) resultJson = "null";
       // One character over is enough for the host to see that it was cut.
       if (resultJson.length > maxChars + 1) resultJson = resultJson.slice(0, maxChars + 1);
@@ -224,7 +234,8 @@ export class Code extends WorkerEntrypoint {
       return {
         status: "failed",
         kind: "script_error",
-        message: String((error && error.message) || error),
+        // Cut here, so a script cannot make the host receive an error message of any size.
+        message: String((error && error.message) || error).slice(0, 2000),
         line: lineOf(error),
         assertionsPassed,
         logs,

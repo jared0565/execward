@@ -25,6 +25,14 @@ export interface CodeToolServiceDeps {
   readonly executor: Executor;
   readonly policy: PolicyStore;
   readonly projects: ProjectStore;
+  /**
+   * Refuse a run that names a project with no record, before anything is counted or
+   * looked up for it. Set where the project's name comes from the calling model (the MCP
+   * server): otherwise a model could make up names, each with a retry limit, a pause
+   * state and a spend cap of its own. (Second review, finding F1; the owner's decision
+   * of 2026-11-26.) Left out, a project with no record is `public`, as FR-32 says.
+   */
+  readonly requireKnownProject?: boolean;
   readonly quotas: QuotaStore;
   readonly audit: AuditStore;
   readonly upstream: Upstream;
@@ -125,6 +133,7 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
       ...(deps.review ? { review: deps.review } : {}),
       ...(deps.netSaving ? { netSaving: deps.netSaving } : {}),
       control: runGate(deps.control),
+      ...(deps.requireKnownProject ? { projectKnown: async (project: string) => (await deps.projects.get(project)) !== undefined } : {}),
       exposure,
       admission: {
         admit: (run) => admitRun(quotaContext(run.project), run.runId, run.wallClockMs),

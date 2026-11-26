@@ -139,6 +139,40 @@ describe("direct tools beside the code tool (task 2.1.9)", () => {
     await client.close();
   });
 
+  // Second review, finding F1: the project's name is the model's own word.
+  it("keeps no count and reads no notices for a project that has no record", async () => {
+    const counted: string[] = [];
+    const noticed: string[] = [];
+    const served: string[] = [];
+    const adapter = mcpAdapter({
+      service: async (input) => {
+        served.push((input as { project: string }).project);
+        return { status: "refused", error: { code: "policy_denied", message: "no record" }, report: REPORT };
+      },
+    });
+    const client = await connect((request) =>
+      adapter.serve(request, {
+        providerRoute: "unknown",
+        projectKnown: async (project) => project === "work",
+        attemptsFor: async (project) => {
+          counted.push(project);
+          return attemptGate();
+        },
+        noticesFor: async (project) => {
+          noticed.push(project);
+          return [];
+        },
+      }),
+    );
+    await client.callTool({ name: "code", arguments: { script: "return 1;", project: "made-up" } });
+    await client.callTool({ name: "code", arguments: { script: "return 1;", project: "work" } });
+    // Both reach the service, which is what refuses the first. Only the real project is counted.
+    expect(served).toEqual(["made-up", "work"]);
+    expect(counted).toEqual(["work"]);
+    expect(noticed).toEqual(["work"]);
+    await client.close();
+  });
+
   it("cannot be used to replace the code tool", async () => {
     const adapter = mcpAdapter({ service: async () => ({ status: "completed", result: 1, truncated: false, untrusted: true, report: REPORT }) });
     const client = await connect((request) => adapter.serve(request, { providerRoute: "unknown", directTools: [{ ...TOOL, path: "code" }] }));
