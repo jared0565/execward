@@ -123,6 +123,15 @@ export interface CodeToolDeps {
 }
 
 /** What a model is told when a result is held. Fixed words: nothing a script wrote. */
+/**
+ * What a call naming a project with no record is told. The name is the caller's own text, so it
+ * is not repeated. The MCP adapter gives the same refusal when its own lookup finds no record.
+ */
+export const UNKNOWN_PROJECT: ExecWardError = {
+  code: "policy_denied",
+  message: "the project named in this call has no record here, so nothing was run. Use the project's exact name; only the owner can add a project",
+};
+
 export const HELD_NOTICE =
   "A critical figure in this result did not match an independent recomputation, so the result is held for the owner to review. Do not run the script again to get round this; tell the user the result is waiting for the owner.";
 
@@ -396,11 +405,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
       // Not knowing is treated as not known.
     }
     if (!known) {
-      return refused(
-        { code: "policy_denied", message: "the project named in this call has no record here, so nothing was run. Use the project's exact name; only the owner can add a project" },
-        input.data.script,
-        input.data.project,
-      );
+      return refused(UNKNOWN_PROJECT, input.data.script, input.data.project);
     }
   }
 

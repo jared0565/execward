@@ -18,7 +18,8 @@
  * builds sign-in, it is mounted only on the test Worker, behind its secret.
  */
 import { createMcpHandler, McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/server";
-import { attemptGate, type AttemptGate } from "../code-tool/attempts";
+import { attemptGate, closedGate, type AttemptGate } from "../code-tool/attempts";
+import { UNKNOWN_PROJECT } from "../code-tool/run";
 import { CODE_TOOL_DESCRIPTION, CODE_TOOL_NAME } from "../code-tool/description";
 import { BOTH_DOORS_GUIDANCE, DirectCallError, directCallScript, type DirectTool } from "../code-tool/direct";
 import { presentForModel } from "../code-tool/present";
@@ -88,7 +89,11 @@ export function mcpAdapter(deps: { readonly service: CodeToolService }): McpAdap
           // looked up: the service refuses the run, and no count or notice is started under that name.
           const known = caller.projectKnown === undefined ? true : await caller.projectKnown(input.project).catch(() => false);
           // The count of failed runs in a row belongs to the caller and the project, not to this request.
-          const attempts = caller.attemptsFor === undefined || !known ? attemptGate() : await caller.attemptsFor(input.project);
+          // A project with no record, or one that could not be looked up, arrives at the service already
+          // closed. The service looks the project up again for itself; if that second answer differed
+          // (the first read failed, or the project was added in between), the run would otherwise go
+          // ahead under a count that is not stored, past a closure that is.
+          const attempts = !known ? closedGate(UNKNOWN_PROJECT) : caller.attemptsFor === undefined ? attemptGate() : await caller.attemptsFor(input.project);
           // Read before the run, so the notice describes the settings this call met.
           const notices = known ? ((await caller.noticesFor?.(input.project).catch(() => [])) ?? []) : [];
           const ran = await deps.service(input, { providerRoute: caller.providerRoute, attempts });

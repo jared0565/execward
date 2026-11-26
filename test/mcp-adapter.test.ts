@@ -144,16 +144,21 @@ describe("direct tools beside the code tool (task 2.1.9)", () => {
     const counted: string[] = [];
     const noticed: string[] = [];
     const served: string[] = [];
+    const closedTo: (string | undefined)[] = [];
     const adapter = mcpAdapter({
-      service: async (input) => {
+      service: async (input, caller) => {
         served.push((input as { project: string }).project);
+        closedTo.push(caller.attempts.blocked()?.code);
         return { status: "refused", error: { code: "policy_denied", message: "no record" }, report: REPORT };
       },
     });
     const client = await connect((request) =>
       adapter.serve(request, {
         providerRoute: "unknown",
-        projectKnown: async (project) => project === "work",
+        projectKnown: async (project) => {
+          if (project === "unreadable") throw new Error("the database is away");
+          return project === "work";
+        },
         attemptsFor: async (project) => {
           counted.push(project);
           return attemptGate();
@@ -165,11 +170,16 @@ describe("direct tools beside the code tool (task 2.1.9)", () => {
       }),
     );
     await client.callTool({ name: "code", arguments: { script: "return 1;", project: "made-up" } });
+    await client.callTool({ name: "code", arguments: { script: "return 1;", project: "unreadable" } });
     await client.callTool({ name: "code", arguments: { script: "return 1;", project: "work" } });
-    // Both reach the service, which is what refuses the first. Only the real project is counted.
-    expect(served).toEqual(["made-up", "work"]);
+    // All reach the service, which records the refusal. Only the real project is counted.
+    expect(served).toEqual(["made-up", "unreadable", "work"]);
     expect(counted).toEqual(["work"]);
     expect(noticed).toEqual(["work"]);
+    // The adapter's answer binds the service: a project it found no record for, or could not look up,
+    // arrives already closed, so the service cannot run it under a count that is not stored even if
+    // its own lookup then succeeds. (aramid review finding on src/mcp/adapter.ts, 2026-11-26.)
+    expect(closedTo).toEqual(["policy_denied", "policy_denied", undefined]);
     await client.close();
   });
 
