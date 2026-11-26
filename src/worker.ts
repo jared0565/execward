@@ -12,6 +12,7 @@
  */
 import { auditLog, d1AuditStore, type AuditDatabase } from "./audit/log";
 import { principalFromAccess, type AccessContext } from "./console/access";
+import { clientChoices } from "./console/client-choice";
 import { ownerConsole } from "./console/console";
 import { escalationQueue } from "./console/escalations";
 import { CONSOLE_PATH, consoleResponse } from "./console/http";
@@ -24,7 +25,7 @@ import { statsReport } from "./meter/stats";
 import { githubWriteCheck } from "./connectors/github-write-check";
 import { githubTokenFor, MCP_HOST, mcpResponse } from "./mcp/production";
 import { outboundFetch } from "./net/outbound";
-import { d1ControlStore, d1EscalationStore, d1QuotaStore, d1StatsStore, type StateDatabase } from "./storage/d1-stores";
+import { d1ControlStore, d1EscalationStore, d1ProjectStore, d1QuotaStore, d1StatsStore, listProjectRecords, setClientChoice, type StateDatabase } from "./storage/d1-stores";
 import type { Env } from "./worker/bindings";
 import { runScheduled, type ScheduledEnv } from "./worker/scheduled";
 
@@ -63,7 +64,9 @@ export async function handle(request: Request, env: Env, access: AccessContext |
     await audit.record({ kind: "console_change", runId: "none", project: "-", body: { action: "github_write_check", by: principal.kind === "owner" ? principal.id : principal.kind, repository: `${owner}/${repo}`, ...result } });
     return result;
   };
-  return (await consoleResponse(request, { console: console_, queue, ...(mailer === undefined ? {} : { mailer }), githubWriteCheck: writeCheck, netSaving: () => quotaNetSavingStore(d1QuotaStore(db)).report(now()), stats: () => statsReport(d1StatsStore(db), now()), principal, nonce })) ?? handleRequest(request);
+  // What each project's client has asked for. The owner records it; the service enforces it.
+  const choices = clientChoices({ store: { get: (project) => d1ProjectStore(db).get(project), list: () => listProjectRecords(db), setChoice: (project, choice) => setClientChoice(db, project, choice) }, audit, now });
+  return (await consoleResponse(request, { console: console_, queue, ...(mailer === undefined ? {} : { mailer }), githubWriteCheck: writeCheck, clientChoices: choices, netSaving: () => quotaNetSavingStore(d1QuotaStore(db)).report(now()), stats: () => statsReport(d1StatsStore(db), now()), principal, nonce })) ?? handleRequest(request);
 }
 
 export default {

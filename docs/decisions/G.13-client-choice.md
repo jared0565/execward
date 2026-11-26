@@ -1,8 +1,8 @@
 # Task G.13: a client's own choice about AI use
 
 Date: 2026-11-26. Requirements: FR-38, FR-32. Builds on 1.3.7 (project data classes) and
-the client notice (G.6). Status: **slice 1 partly built. Storage and enforcement are in.
-The console control is not, and slice 2 is not started.**
+the client notice (G.6). Status: **slice 1 built: storage, enforcement and the console
+control. Slice 2 is not started.**
 
 ## Why
 
@@ -23,7 +23,7 @@ slice 2.
 
 | Slice | What | State |
 |---|---|---|
-| 1 | The choice is stored per project and enforced by the service. The owner sets it in the console | Storage and enforcement built. Console control not built |
+| 1 | The choice is stored per project and enforced by the service. The owner sets it in the console | Built |
 | 2 | The client signs in at an address of their own and sets the same stored choice | Not started. Needs a second Access application, a table linking a client to a project, and a second page |
 
 ## What a choice is
@@ -60,6 +60,23 @@ Two columns added to `projects` by `migrations/0007_client_choice.sql`: `client_
 Setting a project's data class again, which the setup scripts do on every run, leaves
 the choice as it was.
 
+## The console control
+
+The console has a section "Client choices" (`src/console/client-choice.ts`, and the page).
+It lists every project with its own class and its client's choice, and has one form:
+project, AI use, the client's limit, and a reason.
+
+- **Only the signed-in owner,** by the same check as every other console action.
+- **A reason is required.** It is where the owner writes who asked and when.
+- **Only a project with a record.** The refusal does not repeat the name that was typed.
+- **Every change is in the audit log** as a `console_change` with the action
+  `set_client_choice`, the reason, and the choice before and after.
+- **If the log cannot be written, the choice still stands** and the owner is told. A
+  client's request must take effect even when the log does not.
+- **AI use on with no limit is no choice,** and clears what was recorded.
+- **The limits offered stop at confidential.** No project may hold client personal data
+  while gate G.7 is closed.
+
 ## Evidence
 
 `test/exposure.test.ts`: the lowest-of-three rule in nine combinations, a personal plan's
@@ -68,11 +85,18 @@ five runs through the whole service (no AI use, AI use on, a lower limit, a high
 one reading per call). `test/d1-stores.test.ts`, on a real D1 database: a choice stored
 and read back, refused for a project with no record, kept when the class is set again,
 cleared when asked, and a row written behind the code's back refused.
+`test/client-choice.test.ts`: the console control alone and over HTTP, including each
+kind of caller who is not the signed-in owner, a failing audit log, and a recorded limit
+becoming the limit a run gets. `test/console-page.test.ts`: the section, its fields and
+its place on the page.
+
+Not tested: the form in a real browser, and the control against the production
+database. The storage it calls is tested on a real D1 database.
 
 ## Limits
 
-- **Nothing sets a choice in production yet.** The console control is the next pull
-  request. Until then the columns are empty for every project.
+- **No choice has been recorded in production.** Both projects there have empty columns,
+  read on 2026-11-26 after the migration.
 - **A run already going is not stopped.** The choice is read when a run starts. A script
   that is running when the choice changes finishes, within the run's time limit. The
   owner's kill switch and pause still stop a running script at its next call.

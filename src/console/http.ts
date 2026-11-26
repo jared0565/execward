@@ -10,6 +10,9 @@
 import { repositoryName, type WriteCheckResult } from "../connectors/github-write-check";
 import type { NetSavingReport } from "../meter/net-saving";
 import type { StatsReport } from "../meter/stats";
+import type { ClientChoice } from "../broker/exposure";
+import { DATA_CLASSES, type DataClass } from "../contracts/policy";
+import type { ClientChoices } from "./client-choice";
 import { ConsoleAccessError, ConsoleChangeError, type OwnerConsole, type Principal } from "./console";
 import type { ControlState } from "./control";
 import type { EscalationItem, EscalationQueue } from "./escalations";
@@ -75,6 +78,8 @@ export interface ConsoleHttpDeps {
   readonly netSaving?: () => Promise<NetSavingReport>;
   /** The stats report: runs by session, project, client and model (task 2.3.1). Without it the console has no stats address. */
   readonly stats?: () => Promise<StatsReport>;
+  /** What each project's client has asked for (task G.13). Without it the console has no projects address. */
+  readonly clientChoices?: ClientChoices;
   readonly principal: Principal;
   /** A fresh random value per response, for the page's one script and one style block. */
   readonly nonce: () => string;
@@ -188,6 +193,9 @@ export async function consoleResponse(request: Request, deps: ConsoleHttpDeps): 
       await deps.console.state(deps.principal);
       return json({ stats: await deps.stats() });
     }
+    if (path === `${CONSOLE_PATH}/projects` && request.method === "GET" && deps.clientChoices !== undefined) {
+      return json({ projects: await deps.clientChoices.list(deps.principal) });
+    }
     if (path === `${CONSOLE_PATH}/action` && request.method === "POST") {
       // Who is asking is settled before anything the request carries is read.
       await deps.console.state(deps.principal);
@@ -207,6 +215,17 @@ export async function consoleResponse(request: Request, deps: ConsoleHttpDeps): 
         // The owner's choice on a queue item. The queue checks the principal again and applies the choice.
         const resolved = await deps.queue.resolve(deps.principal, field(sent, "id"), field(sent, "option"), field(sent, "reason", { required: false }) || undefined);
         return json({ state: await deps.console.state(deps.principal), resolved: { id: resolved.id, status: resolved.status } });
+      }
+      if (sent.action === "set_client_choice") {
+        if (deps.clientChoices === undefined) return json({ error: "not_changed", message: "client choices are not set up" }, 409);
+        const aiUse = field(sent, "aiUse");
+        if (aiUse !== "on" && aiUse !== "off") throw new BadRequest('"aiUse" must be "on" or "off"');
+        const limit = field(sent, "limit", { required: false });
+        if (limit !== "" && !DATA_CLASSES.includes(limit as DataClass)) throw new BadRequest('"limit" must be a data class, or left empty');
+        // AI use on with no limit is no choice at all: the record goes back to having none.
+        const choice: ClientChoice | undefined = aiUse === "on" && limit === "" ? undefined : { aiUse, ...(limit === "" ? {} : { limit: limit as DataClass }) };
+        await deps.clientChoices.set(deps.principal, field(sent, "project"), choice, field(sent, "reason"));
+        return json({ state: await deps.console.state(deps.principal), projects: await deps.clientChoices.list(deps.principal) });
       }
       if (sent.action === "test_email") {
         if (deps.mailer === undefined) return json({ error: "not_changed", message: "email is not set up" }, 409);
