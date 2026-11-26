@@ -114,7 +114,10 @@ const table = (id, head, rows, none) => {
   if (rows.length === 0) box.append(tbody); else box.append(thead, tbody);
   for (const th of top.children) if (rows.length > 0 && typeof (Array.isArray(rows[0]) ? rows[0] : rows[0].cells)[[...top.children].indexOf(th)] === "number") th.className = "num";
 };
-const busy = (on) => { for (const button of document.querySelectorAll("button")) button.disabled = on; };
+// The stop button is never switched off: a request that hangs must not take the kill switch away.
+const busy = (on) => { for (const button of document.querySelectorAll("button")) if (button.id !== "kill") button.disabled = on; };
+// How long an action waits for the server before the page gives up and the buttons come back.
+const ACTION_TIMEOUT_MS = 30000;
 const when = (ms) => new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC";
 const showQueue = (body) => {
   const box = $("queue"); box.replaceChildren();
@@ -175,9 +178,9 @@ const load = async () => { try { await reply(await fetch("/console/state")); } c
 const act = async (body, done) => {
   say("Working..."); busy(true);
   try {
-    const response = await fetch("/console/action", { method: "POST", headers: { "content-type": "application/json", "x-execward-console": "1" }, body: JSON.stringify(body) });
+    const response = await fetch("/console/action", { method: "POST", signal: AbortSignal.timeout(ACTION_TIMEOUT_MS), headers: { "content-type": "application/json", "x-execward-console": "1" }, body: JSON.stringify(body) });
     if (await reply(response)) say(done);
-  } catch { say("The console could not be reached. Nothing is known to have changed.", true); }
+  } catch { say("The console did not answer. Nothing is known to have changed; reload to see the current state.", true); }
   finally { busy(false); }
 };
 const val = (id) => $(id).value.trim();
@@ -194,7 +197,7 @@ $("unblock").onclick = () => act({ action: "unblock_tool", tool: val("tool"), re
 $("writeCheck").onclick = async () => {
   say("Working..."); busy(true);
   try {
-    const response = await fetch("/console/action", { method: "POST", headers: { "content-type": "application/json", "x-execward-console": "1" }, body: JSON.stringify({ action: "github_write_check", repository: val("writeRepo") }) });
+    const response = await fetch("/console/action", { method: "POST", signal: AbortSignal.timeout(ACTION_TIMEOUT_MS), headers: { "content-type": "application/json", "x-execward-console": "1" }, body: JSON.stringify({ action: "github_write_check", repository: val("writeRepo") }) });
     const body = await response.json().catch(() => ({}));
     say(body.message || "The check could not be run.", !(response.ok && body.writeCheck && body.writeCheck.outcome === "refused"));
   } catch { say("The console could not be reached.", true); }

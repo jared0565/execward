@@ -49,6 +49,22 @@ describe("the console page's layout (the design pass of 2026-11-25)", () => {
     expect(page.match(/finally \{ busy\(false\); \}/g)).toHaveLength(2);
   });
 
+  // aramid review finding on src/console/page.ts, 2026-11-26: every button was switched off while any
+  // request was on its way, and a request had no time limit, so one that hung took the kill switch away.
+  it("never switches the stop button off, and gives every action a time limit", () => {
+    const script = page.slice(page.indexOf("<script"));
+    // The one line that switches buttons off passes over the stop button, and it is the button with that id.
+    expect(script).toContain('const busy = (on) => { for (const button of document.querySelectorAll("button")) if (button.id !== "kill") button.disabled = on; };');
+    expect(body).toContain('<button class="stop" id="kill">');
+    // Nothing else on the page switches a button off.
+    expect(script.match(/\.disabled\s*=/g)).toHaveLength(1);
+    // Both places that send an action give up after a set time, so the other buttons come back too.
+    const sends = script.match(/fetch\("\/console\/action", \{[^\n]*/g) ?? [];
+    expect(sends).toHaveLength(2);
+    for (const send of sends) expect(send).toContain("signal: AbortSignal.timeout(ACTION_TIMEOUT_MS)");
+    expect(script).toMatch(/const ACTION_TIMEOUT_MS = \d+;/);
+  });
+
   it("shows figures in tables, with numbers to the right, and a remark under the name it belongs to", () => {
     for (const id of ["saving", "stats-project", "stats-client", "stats-model", "stats-session"]) expect(body).toContain(`<table id="${id}"`);
     expect(page).toContain("font-variant-numeric: tabular-nums");
