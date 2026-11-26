@@ -16,7 +16,7 @@ Everything in **[square brackets]** below.
 
 | # | Blank | Why it is the owner's |
 |---|---|---|
-| 1 | The business's name and how a client makes contact | It is the owner's notice |
+| 1 | The business's name and its admin email address. The owner said on 2026-11-26 that a client asks by email, to admin; the address itself is not written here yet | It is the owner's notice |
 | 2 | How the owner's Claude Code is signed in: a personal plan, or an organisation account under Anthropic's Commercial Terms | Only the owner can see the account. A personal plan is not approved for client data |
 | 3 | That the OpenAI key stored for the reviewer is from an account under business terms | Asked on 2026-11-25; not confirmed in words |
 | 4 | The owner's role with each client | A fact about each contract (task G.11) |
@@ -105,7 +105,7 @@ any other source.
 ### Your choices
 
 You can ask me not to use AI tools on your work, or to limit which data they may see.
-**[How to ask, and who to contact.]**
+To ask, send an email to **[the admin email address]**.
 
 ---
 
