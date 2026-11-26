@@ -65,6 +65,14 @@ export function backupKey(ms: number): string {
   return `${BACKUP_PREFIX}${dayOf(ms)}.json`;
 }
 
+/**
+ * The key of the note, beside a day's backup, that a clean-up job of that day's round failed
+ * and is still owed (see ./worker/scheduled.ts). Not a backup: it holds job names only.
+ */
+export function retryKey(ms: number): string {
+  return `${backupKey(ms)}.retry`;
+}
+
 async function readTable(db: BackupDatabase, table: string): Promise<Row[]> {
   const rows: Row[] = [];
   let after = 0;
@@ -103,8 +111,8 @@ export async function pruneBackups(bucket: BackupBucket, now: number): Promise<n
   do {
     const page = await bucket.list({ prefix: BACKUP_PREFIX, ...(cursor === undefined ? {} : { cursor }) });
     for (const { key } of page.objects) {
-      const day = /^backups\/(\d{4}-\d{2}-\d{2})\.json$/.exec(key)?.[1];
-      // A name that is not a backup's is left alone.
+      const day = /^backups\/(\d{4}-\d{2}-\d{2})\.json(?:\.retry)?$/.exec(key)?.[1];
+      // A name that is not a backup's, or the note beside one, is left alone.
       if (day !== undefined && day < oldest) expired.push(key);
     }
     cursor = page.truncated ? page.cursor : undefined;

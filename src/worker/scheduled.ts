@@ -11,15 +11,23 @@
  * the next firing tries again, so a missed or failed round mends itself
  * within five minutes instead of waiting a day.
  *
+ * A backup that worked does not mean every job did. When a clean-up job
+ * failed (retention, the counter sweep, the stats trim), a note is left
+ * beside the day's backup, and each later firing runs those jobs again until
+ * they work. Only those: they remove what is past its time and are safe to
+ * repeat. The digest and the reviewer's check are not done twice.
+ *
  * What was done is written to the audit log, as counts: always for a daily
- * round, and for a frequent round only when it did something or failed.
+ * round, and for a frequent round only when it did something or failed. A
+ * daily round is also recorded before it starts, and deletes nothing if
+ * that record cannot be written.
  */
 import { auditLog, d1AuditStore, type AuditDatabase } from "../audit/log";
-import { backUp, backupKey, type BackupBucket, type BackupDatabase, type BackupResult } from "../backup";
+import { backUp, backupKey, retryKey, type BackupBucket, type BackupDatabase, type BackupResult } from "../backup";
 import { escalationQueue } from "../console/escalations";
 import { bindingMailer, CONSOLE_URL } from "../console/mailer";
 import { notifier } from "../console/notify";
-import { runMaintenance, type JobResult } from "../maintenance";
+import { REPEATABLE_DAILY_JOBS, runMaintenance, type JobResult } from "../maintenance";
 import { STATS_KEEP_MS } from "../meter/stats";
 import { d1ControlStore, d1EscalationStore, d1QuotaStore, d1StatsStore, sweepQuotaCounters, type StateDatabase } from "../storage/d1-stores";
 import { runGoldenCheck } from "../verify/golden";
@@ -70,29 +78,60 @@ export async function runScheduled(env: ScheduledEnv, now: number, newId: () => 
   const frequent = await runMaintenance(deps, "frequent");
   let result: ScheduledResult = { frequent };
 
-  let backedUpToday: boolean;
+  const runId = `maintenance-${new Date(now).toISOString()}`;
+  const owedKey = retryKey(now);
+  let today: string[];
   try {
-    backedUpToday = (await env.BACKUPS.list({ prefix: backupKey(now) })).objects.length > 0;
+    today = (await env.BACKUPS.list({ prefix: backupKey(now) })).objects.map((object) => object.key);
   } catch {
     // The bucket cannot be read. The daily round is tried; its backup will say why it failed.
-    backedUpToday = false;
+    today = [];
   }
-  if (!backedUpToday) {
-    const daily = await runMaintenance(deps, "daily");
-    let backup: ScheduledResult["backup"];
+  const backedUpToday = today.includes(backupKey(now));
+  const owed = today.includes(owedKey);
+  if (!backedUpToday || owed) {
+    // With the day backed up, only the clean-up jobs that are safe to repeat are run again.
+    const only = backedUpToday ? REPEATABLE_DAILY_JOBS : undefined;
+    // On record before anything is deleted. A round that cannot be recorded deletes nothing, as a
+    // run that cannot be recorded does not start. It is tried again at the next firing.
+    let recorded = true;
     try {
-      backup = await backUp(db, env.BACKUPS, now);
-    } catch (error) {
-      backup = { error: error instanceof Error ? error.message.slice(0, 200) : "failed" };
+      await log.record({ kind: "maintenance", runId, project: "system", body: { started: only === undefined ? "daily" : "daily_retry" } });
+    } catch {
+      recorded = false;
     }
-    result = { frequent, daily, backup };
+    if (!recorded) {
+      result = { frequent, daily: [{ job: "apply_retention", ok: false, detail: "not started: the audit log could not be written, so nothing was deleted" }] };
+    } else {
+      const daily = await runMaintenance(deps, "daily", only);
+      let backup: ScheduledResult["backup"];
+      if (!backedUpToday) {
+        try {
+          backup = await backUp(db, env.BACKUPS, now);
+        } catch (error) {
+          backup = { error: error instanceof Error ? error.message.slice(0, 200) : "failed" };
+        }
+      }
+      // A failed backup needs no note: without the day's backup the whole round is done again.
+      const marked = backedUpToday || (backup !== undefined && !("error" in backup));
+      const failedJobs = daily.filter((job) => !job.ok && REPEATABLE_DAILY_JOBS.includes(job.job)).map((job) => job.job);
+      if (marked) {
+        try {
+          if (failedJobs.length > 0) await env.BACKUPS.put(owedKey, JSON.stringify(failedJobs));
+          else if (owed) await env.BACKUPS.delete(owedKey);
+        } catch {
+          // The note could not be changed. The round's record below says what failed.
+        }
+      }
+      result = { frequent, daily, ...(backup === undefined ? {} : { backup }) };
+    }
   }
 
   const eventful = result.daily !== undefined || frequent.some((job) => !job.ok || !job.detail.startsWith("0 "));
   if (eventful) {
     // The record of the round is itself best-effort: failing to write it must not undo the work.
     await log
-      .record({ kind: "maintenance", runId: `maintenance-${new Date(now).toISOString()}`, project: "system", body: { ...result } })
+      .record({ kind: "maintenance", runId, project: "system", body: { ...result } })
       .catch(() => undefined);
   }
   return result;

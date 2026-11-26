@@ -349,8 +349,9 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
     expect(reply.runs[0]?.daily?.find((job) => job.job === "check_reviewer")).toMatchObject({ ok: true, detail: "the reviewer could not be asked in 5 of 5 cases; nothing counted" });
     expect(reply.runs[0]?.backup).toMatchObject({ key: "backups/2027-01-15.json" });
     expect(reply.keys).toEqual(["backups/2027-01-15.json", "backups/2027-01-16.json"]);
-    // Each daily round is recorded, and so is each day's check of the reviewer. A frequent round that did nothing is not.
-    expect(reply.kinds).toEqual(["reviewer_check", "maintenance", "reviewer_check", "maintenance"]);
+    // Each daily round is recorded twice, before it deletes anything and after, and so is each day's check
+    // of the reviewer. A frequent round that did nothing is not.
+    expect(reply.kinds).toEqual(["maintenance", "reviewer_check", "maintenance", "maintenance", "reviewer_check", "maintenance"]);
     expect(reply.chain).toMatchObject({ ok: true });
   });
 
@@ -369,7 +370,47 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
     expect(reply.runs.map((run) => run.backup)).toEqual([{ error: "the bucket refused the write" }, { error: "the bucket refused the write" }]);
     expect(reply.keys).toEqual([]);
     // The daily round is done twice; the check of the reviewer inside it is still done once that day.
-    expect(reply.kinds).toEqual(["reviewer_check", "maintenance", "maintenance"]);
+    expect(reply.kinds).toEqual(["maintenance", "reviewer_check", "maintenance", "maintenance", "maintenance"]);
+  });
+
+  // aramid review finding on src/worker/scheduled.ts, 2026-11-26: the backup was the mark that the day
+  // was done whatever the jobs reported, so text past its keeping time stayed until the next day.
+  it("tries a failed clean-up job again at each firing until it works, and nothing else of the daily round", async () => {
+    const FIVE = 5 * 60_000;
+    const reply = await timer({ times: [MORNING, MORNING + FIVE, MORNING + 2 * FIVE, MORNING + 3 * FIVE], oldEntryDays: 8, retentionFailsFor: 2 });
+    const jobs = reply.runs.map((run) => run.daily?.map((job) => `${job.job}:${job.ok ? "ok" : "failed"}`));
+    expect(jobs).toEqual([
+      ["apply_retention:failed", "check_reviewer:ok", "sweep_counters:ok", "trim_stats:ok"],
+      // The day is backed up, so only the jobs that are safe to repeat run again: no second check, no second email.
+      ["apply_retention:failed", "sweep_counters:ok", "trim_stats:ok"],
+      ["apply_retention:ok", "sweep_counters:ok", "trim_stats:ok"],
+      undefined,
+    ]);
+    expect(reply.runs.map((run) => run.backup?.key)).toEqual(["backups/2027-01-15.json", undefined, undefined, undefined]);
+    expect(reply.oldTextRemoved).toBe(true);
+    // The note that a job was owed is gone once it has worked.
+    expect(reply.keys).toEqual(["backups/2027-01-15.json"]);
+    expect(reply.kinds.filter((kind) => kind === "reviewer_check")).toEqual(["reviewer_check"]);
+    expect(reply.chain).toMatchObject({ ok: true });
+  });
+
+  it("keeps the note that a clean-up job is owed while it still fails", async () => {
+    const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000], oldEntryDays: 8, retentionFailsFor: 2 });
+    expect(reply.keys).toEqual(["backups/2027-01-15.json", "backups/2027-01-15.json.retry"]);
+    expect(reply.oldTextRemoved).toBe(false);
+  });
+
+  // aramid review finding on src/worker/scheduled.ts, 2026-11-26: the round deleted first and recorded last.
+  it("deletes nothing in a daily round it could not first record, and does the round at the next firing", async () => {
+    const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000], oldEntryDays: 8, auditFailsFor: 1 });
+    expect(reply.runs[0]?.daily).toEqual([{ job: "apply_retention", ok: false, detail: "not started: the audit log could not be written, so nothing was deleted" }]);
+    expect(reply.runs[0]?.backup).toBeUndefined();
+    expect(reply.runs[1]?.daily?.[0]).toMatchObject({ job: "apply_retention", ok: true });
+    expect(reply.runs[1]?.backup).toMatchObject({ key: "backups/2027-01-15.json" });
+    expect(reply.oldTextRemoved).toBe(true);
+    // The old entry, then the second firing's round: its start, the reviewer's check, its end.
+    expect(reply.kinds).toEqual(["test", "maintenance", "reviewer_check", "maintenance"]);
+    expect(reply.chain).toMatchObject({ ok: true });
   });
 });
 

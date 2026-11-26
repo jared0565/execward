@@ -36,9 +36,18 @@ export interface JobResult {
   readonly detail: string;
 }
 
-export async function runMaintenance(deps: MaintenanceDeps, round: MaintenanceRound): Promise<JobResult[]> {
+/**
+ * The daily jobs that only remove what is past its keeping time. Running one again does no
+ * harm, and one that failed is owed until it works. The others are not repeated: the digest
+ * would be a second email, and the reviewer's check is once a day by its own rule.
+ */
+export const REPEATABLE_DAILY_JOBS: readonly JobResult["job"][] = ["apply_retention", "sweep_counters", "trim_stats"];
+
+/** `only`, when given, names the jobs of the round to run; the rest are left out of the report. */
+export async function runMaintenance(deps: MaintenanceDeps, round: MaintenanceRound, only?: readonly JobResult["job"][]): Promise<JobResult[]> {
   const results: JobResult[] = [];
   const job = async (name: JobResult["job"], work: () => Promise<string>): Promise<void> => {
+    if (only !== undefined && !only.includes(name)) return;
     try {
       results.push({ job: name, ok: true, detail: await work() });
     } catch (error) {
