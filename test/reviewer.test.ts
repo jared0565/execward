@@ -121,7 +121,8 @@ describe("the independent reviewer (task 2.2.3, FR-48)", () => {
       { number: 1, criterion: "The answer is a number." },
       { number: 2, criterion: "It counts open issues only." },
     ]);
-    expect(inside.output).toBe('{"open":3}');
+    // The value itself, not its JSON as text: sent as text, a number would reach the reviewer in quotes.
+    expect(inside.output).toEqual({ open: 3 });
     expect(inside.report).toEqual(REPORT);
   });
 
