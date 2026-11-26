@@ -86,6 +86,12 @@ export interface CodeToolDeps {
    */
   readonly exposure?: (project: string) => Promise<{ readonly allowed: DataClass; readonly provider: string }>;
   /**
+   * Whether the project has a record. Given where the project's name is the calling
+   * model's own word: a run for a name with no record is then refused. If it throws, the
+   * run is refused.
+   */
+  readonly projectKnown?: (project: string) => Promise<boolean>;
+  /**
    * Run admission: per-project quotas and spend caps (FR-27). A run is admitted
    * before it starts and released when it ends, however it ends.
    */
@@ -168,6 +174,10 @@ export function truncationNotice(partial: unknown, maxBytes: number): { notice: 
   const last = partial.charCodeAt(fits - 1);
   if (last >= 0xd800 && last <= 0xdbff) fits -= 1;
   return wrap(partial.slice(0, fits));
+}
+
+function higherClass(a: DataClass, b: DataClass): DataClass {
+  return DATA_CLASSES.indexOf(a) >= DATA_CLASSES.indexOf(b) ? a : b;
 }
 
 function byteLength(value: unknown): number {
@@ -375,6 +385,24 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   // FR-47: the criteria are on record before work starts. Through this route they are the
   // model's own words, so they are marked as that and never treated as the user's.
   if (input.data.criteria !== undefined && input.data.criteria.length > 0) criteria = { source: "model_supplied", items: [...input.data.criteria] };
+
+  // A project nobody has added is not run, and nothing is counted or looked up under its name.
+  // The name is the caller's own text, so it is not repeated in the reply.
+  if (deps.projectKnown) {
+    let known = false;
+    try {
+      known = await deps.projectKnown(input.data.project);
+    } catch {
+      // Not knowing is treated as not known.
+    }
+    if (!known) {
+      return refused(
+        { code: "policy_denied", message: "the project named in this call has no record here, so nothing was run. Use the project's exact name; only the owner can add a project" },
+        input.data.script,
+        input.data.project,
+      );
+    }
+  }
 
   // FR-41: a task that was closed, by a security failure or by using up its retries, runs nothing more.
   const closed = deps.attempts?.blocked();
@@ -613,7 +641,10 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
             criteria: criteria.items,
             output: output.result,
             report: output.report,
-            dataClass: read ?? "public",
+            // What goes to the reviewer is more than what tools returned: the caller's own request and
+            // criteria go too, and nothing classifies those. So the material is treated as holding
+            // whatever the run was allowed to handle, when that is higher than what it read.
+            dataClass: exposed === undefined ? (read ?? "public") : higherClass(read ?? "public", exposed.allowed),
             deterministicCheckPassed: true,
             tier: 0,
           });

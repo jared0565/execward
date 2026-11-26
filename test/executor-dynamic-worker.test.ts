@@ -126,6 +126,25 @@ return total;`);
     expect(reply.calls).toEqual([]);
   });
 
+  // Found by the second review of the sandbox (task 2.3.3, finding F3): writing the final value as
+  // JSON runs the script's own toJSON, after the last look at whether an assertion had failed.
+  it("does not let an assertion that fails while the result is written out pass as completed", async () => {
+    const reply = await run(`return { toJSON() { try { assert(false, "late failure"); } catch {} return "looks fine"; } };`);
+    expect(reply.outcome).toMatchObject({ status: "failed", failure: { kind: "assertion_failed" } });
+    expect(failure(reply).message).toContain("late failure");
+  });
+
+  it("records a failed assertion even when its message cannot be turned into text", async () => {
+    const reply = await run(`try { assert(false, { toString() { throw new Error("no message for you"); } }); } catch {}\nreturn "carried on";`);
+    expect(reply.outcome).toMatchObject({ status: "failed", failure: { kind: "assertion_failed" } });
+  });
+
+  it("cuts a script's error message before it is sent to the host", async () => {
+    const reply = await run(`throw new Error("e".repeat(500000));`);
+    expect(failure(reply).kind).toBe("script_error");
+    expect(failure(reply).message.length).toBeLessThanOrEqual(2100);
+  });
+
   it("leaves the script no globals beyond the allowed set", async () => {
     // Walks the prototype chain too: fetch and setTimeout are not the global object's own properties.
     const reply = await run(

@@ -46,6 +46,11 @@ export class UpstreamToolError extends Error {
   }
 }
 
+/** A result the broker turned away for a reason worked out from the result itself: its size or its fields. */
+class RejectedResult extends Error {
+  override readonly name = "RejectedResult";
+}
+
 /** Something unusual the broker let through but noted for the audit log (FR-29). */
 export interface BrokerFlag {
   readonly path: string;
@@ -145,14 +150,24 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     const large = bytes > CALL_LIMITS.largeArgumentBytes;
     if (record.outbound) {
       if (large) deny(path, `the arguments to an outbound tool are unusually large (${bytes} bytes)`);
-      const sensitive = reads.find((read) => read.sensitive);
-      // An empty destination list approves nothing, so by default every such call stops here.
-      const approved = record.destinationAllowlist.length > 0 && destinations > 0;
-      if (sensitive && !approved) {
-        deny(path, `the run has read sensitive data from "${sensitive.path}", and this tool can send data out`);
-      }
+      checkSensitiveFlow(path, record, destinations);
     } else if (large) {
       flags.push({ path, kind: "large_argument", bytes });
+    }
+  }
+
+  /**
+   * The first half of the data-flow rule on its own. It is asked twice: with the other
+   * checks, and again just before the call is sent, because a sibling call may have
+   * read something sensitive while this one waited on a store.
+   */
+  function checkSensitiveFlow(path: string, record: PolicyRecord, destinations: number): void {
+    if (!record.outbound) return;
+    const sensitive = reads.find((read) => read.sensitive);
+    // An empty destination list approves nothing, so by default every such call stops here.
+    const approved = record.destinationAllowlist.length > 0 && destinations > 0;
+    if (sensitive && !approved) {
+      deny(path, `the run has read sensitive data from "${sensitive.path}", and this tool can send data out`);
     }
   }
 
@@ -168,14 +183,14 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     if (json === undefined) throw new Error("schema_invalid: the tool's result is not valid JSON data");
     const bytes = new TextEncoder().encode(json).length;
     if (bytes > CALL_LIMITS.maxToolResultBytes) {
-      throw new Error(`result_too_large: the tool's result is ${bytes} bytes; the limit is ${CALL_LIMITS.maxToolResultBytes}. Ask for less, for example one page at a time`);
+      throw new RejectedResult(`result_too_large: the tool's result is ${bytes} bytes; the limit is ${CALL_LIMITS.maxToolResultBytes}. Ask for less, for example one page at a time`);
     }
     // The script gets the copy that was measured, not the object the upstream still holds.
     const copy = JSON.parse(json) as unknown;
     if (definition.outputSchema !== undefined) {
       const checked = checkAgainstSchema(copy, definition.outputSchema, "allow");
       if (checked.problems.length > 0) {
-        throw new Error(`schema_invalid: the tool's result does not match its schema (${checked.problems.slice(0, 3).join("; ")})`);
+        throw new RejectedResult(`schema_invalid: the tool's result does not match its schema (${checked.problems.slice(0, 3).join("; ")})`);
       }
     }
     const records = Array.isArray(copy) ? copy.length : 1;
@@ -232,14 +247,19 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     const ahead = counted.get(path) ?? { left: 0, block: 1, limit: record.quotas.callsPerDay };
     counted.set(path, ahead);
     if (ahead.left === 0) {
-      let over = await countCall(quotas, path, ahead.limit, ahead.block);
-      if (over !== undefined && ahead.block > 1) {
+      // Several calls to one tool can be here at once (a script may start many together).
+      // Each is credited exactly what it counted, held in a variable of its own: reading the
+      // shared block size again after the wait would credit calls that were never counted.
+      let block = ahead.block;
+      ahead.block = Math.min(block * 2, MAX_COUNT_BLOCK);
+      let over = await countCall(quotas, path, ahead.limit, block);
+      if (over !== undefined && block > 1) {
+        block = 1;
         ahead.block = 1;
         over = await countCall(quotas, path, ahead.limit, 1);
       }
       if (over !== undefined) end("quota_exceeded", path, over);
-      ahead.left = ahead.block;
-      ahead.block = Math.min(ahead.block * 2, MAX_COUNT_BLOCK);
+      ahead.left += block;
     }
     ahead.left--;
   }
@@ -342,12 +362,15 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         if (!allowed) deny(path, `the ${found.kind === "url" ? "URL" : "path"} in "${found.at}" is not on the tool's allowlist`);
       }
       // Every URL found above is already on the tool's list; this counts them.
-      checkDataFlow(path, record, args, checked.located.filter((found) => found.kind === "url").length);
+      const destinations = checked.located.filter((found) => found.kind === "url").length;
+      checkDataFlow(path, record, args, destinations);
       await checkQuotas(path, record);
 
       // The checks above wait on stores. Meanwhile a sibling call may have been refused, a
       // switch thrown or the time limit reached. Nothing is sent upstream for a run that is over.
       guard(path);
+      // Or a sibling may have read something sensitive: the rule is asked again at the last moment.
+      checkSensitiveFlow(path, record, destinations);
 
       let result: unknown;
       try {
@@ -361,7 +384,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
           // nothing counts as read, and a failed read does not block what comes after it.
           const status = (cause as { status?: unknown } | null)?.status;
           const coded = typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? ` with status ${status}` : "";
-          throw new Error(`upstream_error: the tool failed${coded}; its message is withheld because the tool is marked sensitive`, { cause });
+          // No `cause` either: it would carry the upstream's words across with the error.
+          // eslint-disable-next-line preserve-caught-error -- the cause is what must not be passed on
+          throw new Error(`upstream_error: the tool failed${coded}; its message is withheld because the tool is marked sensitive`);
         }
         // The upstream's own words are untrusted text: passed to the script, cut short, and nothing more.
         const said = cause instanceof Error ? cause.message : String(cause);
@@ -378,7 +403,18 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       } catch (cause) {
         // A result the broker had to reject is an upstream failure too.
         upstreamFailed(path);
-        throw cause;
+        // Fixed words that say nothing about the result are passed on as they are.
+        if (!(cause instanceof RejectedResult)) throw cause;
+        // Otherwise the reason was worked out from the result: its size, or the names of its
+        // fields. That is the tool's data. A sensitive tool's is withheld, as its error is.
+        const why = cause.message;
+        const code = /^([a-z_]+):/.exec(why)?.[1] ?? "schema_invalid";
+        // eslint-disable-next-line preserve-caught-error -- the cause is what must not be passed on
+        if (record.sensitive) throw new Error(`${code}: the tool's result was rejected; the details are withheld because the tool is marked sensitive`);
+        // Any other tool's counts as a read of its data class (FR-36).
+        const shown = why.length > 500 ? `${why.slice(0, 500)}...` : why;
+        reads.push({ path, server: record.server, tool: record.tool, dataClass: record.dataClass, sensitive: record.sensitive, bytes: new TextEncoder().encode(shown).length, records: 0 });
+        throw new Error(shown, { cause });
       }
       errorsInARow = 0;
       return accepted;
@@ -396,6 +432,8 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         return deny("search", "the policy table is unavailable");
       }
       const cap = await dataClassCap("search");
+      // The waits above may have outlasted the run. Nothing more is done for one that is over.
+      guard("search");
       // A script only ever learns about tools it could call.
       const paths = records
         .filter((record) => scriptMayCall(record) && record.tier === 0 && withinCap(record, cap))
@@ -416,6 +454,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         } catch {
           // The name alone is searched.
         }
+        guard("search");
         const holds = (text: string, word: string): boolean => (word.length < 3 ? searchWords(text).includes(word) : text.includes(word));
         // A word in the name counts three times a word found only in the description.
         const score = wanted.reduce((sum, word) => sum + (holds(name, word) ? 3 : holds(docs, word) ? 1 : 0), 0);
@@ -437,12 +476,14 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         // Not a security event: asking about a name is not an attempt to use it.
         throw new Error(`no tool named "${path}" is available to scripts`);
       }
+      guard(path);
       let docs: { readonly typing: string } | undefined;
       try {
         docs = await deps.docsFor?.(path);
       } catch {
         docs = undefined;
       }
+      guard(path);
       return { path, server: record.server, tool: record.tool, tier: record.tier, dataClass: record.dataClass, ...(docs ? { typing: docs.typing } : {}) };
     },
   };

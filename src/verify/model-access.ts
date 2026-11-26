@@ -200,6 +200,34 @@ function textOf(body: unknown): { readonly text: string } | { readonly problem: 
   return { text };
 }
 
+/**
+ * A reply's text, read a piece at a time and counted in bytes as they arrive. Reading stops,
+ * and the rest is dropped, as soon as there are more than `maxBytes`: `undefined` then.
+ */
+export async function textWithin(response: Response, maxBytes: number): Promise<string | undefined> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const pieces: Uint8Array[] = [];
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    pieces.push(value);
+  }
+  const all = new Uint8Array(bytes);
+  let at = 0;
+  for (const piece of pieces) {
+    all.set(piece, at);
+    at += piece.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+
 export function verificationAccess(deps: VerificationDeps): VerificationAccess {
   const models = deps.models ?? VERIFICATION_MODELS;
   const budget = deps.budget ?? VERIFICATION_BUDGET;
@@ -278,8 +306,8 @@ export function verificationAccess(deps: VerificationDeps): VerificationAccess {
       // The provider's own words are not passed on either: only the status.
       if (!response.ok) throw new VerificationFailed(`the verification provider answered ${response.status}`);
 
-      const raw = await response.text();
-      if (raw.length > VERIFICATION_LIMITS.maxReplyBytes) throw new VerificationFailed("the verification provider's reply is larger than verification reads");
+      const raw = await textWithin(response, VERIFICATION_LIMITS.maxReplyBytes);
+      if (raw === undefined) throw new VerificationFailed("the verification provider's reply is larger than verification reads");
       let parsed: unknown;
       try {
         parsed = JSON.parse(raw);

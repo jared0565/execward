@@ -164,7 +164,9 @@ export async function runGoldenCheck(deps: GoldenCheckDeps): Promise<string> {
   const record = (body: Record<string, unknown>): Promise<unknown> =>
     deps.audit.record({ kind: "reviewer_check", runId, project: "system", body: { cases: results, ...body } }).catch(() => undefined);
 
-  if (notAsked.length > 0) {
+  // A wrong verdict is a wrong verdict, whether or not every other case could be asked. Only a
+  // day with no wrong verdict and a case that could not be asked counts for nothing.
+  if (notAsked.length > 0 && wrong.length === 0) {
     await record({ result: "not_asked" });
     return `the reviewer could not be asked in ${notAsked.length} of ${results.length} cases; nothing counted`;
   }
