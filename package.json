@@ -22,7 +22,8 @@
     "check:deployed": "tsx scripts/check-deployed.ts",
     "audit:export": "tsx scripts/export-audit.ts",
     "emergency:stop": "tsx scripts/emergency-stop.ts",
-    "setup:github": "tsx scripts/setup-github.ts"
+    "setup:github": "tsx scripts/setup-github.ts",
+    "repo:setup": "tsx scripts/repo-setup.ts"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "1.12.0",
