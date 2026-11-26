@@ -174,7 +174,17 @@ const loadStats = async () => {
   try { const response = await fetch("/console/stats"); const body = await response.json().catch(() => ({})); if (response.ok && body.stats) showStats(body.stats); else list("statsNotes", [], "The stats could not be read."); }
   catch { list("statsNotes", [], "The stats could not be read."); }
 };
-const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } loadQueue(); loadSaving(); loadStats(); };
+const CLASSES = { public: "Public", internal: "Internal", confidential: "Confidential", client_personal: "Client personal data" };
+const showProjects = (projects) => {
+  table("projects", ["Project", "Project's own class", "AI use", "Client's limit"], projects.map((record) => ({
+    cells: [record.project, CLASSES[record.dataClass] || record.dataClass, record.clientChoice && record.clientChoice.aiUse === "off" ? "OFF" : "On", record.clientChoice && record.clientChoice.limit ? (CLASSES[record.clientChoice.limit] || record.clientChoice.limit) : "None"],
+    flag: Boolean(record.clientChoice && record.clientChoice.aiUse === "off") })), "No project has a record.");
+};
+const loadProjects = async () => {
+  try { const response = await fetch("/console/projects"); const body = await response.json().catch(() => ({})); if (response.ok && body.projects) showProjects(body.projects); else table("projects", [""], [], "The projects could not be read."); }
+  catch { table("projects", [""], [], "The projects could not be read."); }
+};
+const load = async () => { try { await reply(await fetch("/console/state")); } catch { say("The console could not be reached.", true); } loadQueue(); loadProjects(); loadSaving(); loadStats(); };
 const act = async (body, done) => {
   say("Working..."); busy(true);
   try {
@@ -191,7 +201,8 @@ $("off").onclick = () => act({ action: "code_mode_off" }, "Code Mode is off.");
 $("onboard").onclick = () => act({ action: "complete_onboarding", profile: $("profile").value }, "Onboarding recorded.");
 $("pause").onclick = () => act({ action: "pause_project", project: val("project"), reason: val("projectReason") }, "Project paused.");
 $("resume").onclick = () => act({ action: "resume_project", project: val("project"), reason: val("projectReason") }, "Project resumed.");
-$("block").onclick = () => act({ action: "block_tool", tool: val("tool"), reason: val("toolReason") }, "Tool blocked.");
+$("choice").onclick = async () => { await act({ action: "set_client_choice", project: val("choiceProject"), aiUse: $("choiceUse").value, limit: $("choiceLimit").value, reason: val("choiceReason") }, "The client's choice is recorded."); loadProjects(); };
+$("block").onclick =() => act({ action: "block_tool", tool: val("tool"), reason: val("toolReason") }, "Tool blocked.");
 $("testEmail").onclick = () => act({ action: "test_email" }, "Test email sent. Check your inbox, and your spam folder.");
 $("unblock").onclick = () => act({ action: "unblock_tool", tool: val("tool"), reason: val("toolReason") }, "Tool unblocked.");
 $("writeCheck").onclick = async () => {
@@ -260,6 +271,22 @@ export function consolePage(nonce: string): string {
 <button id="pause">Pause</button>
 <button id="resume">Resume</button>
 </div>
+</section>
+
+<section>
+<h2>Client choices</h2>
+<p>A client can ask that AI tools are not used on their work, or that they see less. Record it here and it is enforced from the next run.</p>
+<div class="scroll"><table id="projects"><tbody><tr><td class="muted">Loading...</td></tr></tbody></table></div>
+<div class="fields">
+<label>Project <input id="choiceProject" maxlength="200"></label>
+<label>AI use
+<select id="choiceUse"><option value="on">On</option><option value="off">Off: run nothing for this project</option></select></label>
+<label>Most the client lets AI tools see
+<select id="choiceLimit"><option value="">No limit of their own</option><option value="public">Public data only</option><option value="internal">Internal data</option><option value="confidential">Confidential data</option></select></label>
+<label>Reason: who asked, and when <input id="choiceReason" maxlength="200"></label>
+</div>
+<div class="actions"><button id="choice">Record the client's choice</button></div>
+<p class="note">A client's limit can only lower what a run may handle, never raise it above the project's own class. A script that is already running finishes.</p>
 </section>
 
 <section>

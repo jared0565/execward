@@ -11,7 +11,7 @@ const at = (text: string): number => {
 
 describe("the console page's layout (the design pass of 2026-11-25)", () => {
   it("puts what is waiting first, then stopping, before any figures", () => {
-    const order = ["Waiting for you", "Kill switch", "Code Mode", "Paused projects", "Blocked tools", "Net saving after verification", "Stats", "Onboarding", "Email", "GitHub"].map((heading) => at(`<h2>${heading}</h2>`));
+    const order = ["Waiting for you", "Kill switch", "Code Mode", "Paused projects", "Client choices", "Blocked tools", "Net saving after verification", "Stats", "Onboarding", "Email", "GitHub"].map((heading) => at(`<h2>${heading}</h2>`));
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
@@ -33,7 +33,7 @@ describe("the console page's layout (the design pass of 2026-11-25)", () => {
 
   it("labels every field", () => {
     const fields = [...body.matchAll(/<(?:input|select) id="([^"]+)"/g)].map((match) => match[1]);
-    expect(fields.sort()).toEqual(["killReason", "profile", "project", "projectReason", "tool", "toolReason", "writeRepo"]);
+    expect(fields.sort()).toEqual(["choiceLimit", "choiceProject", "choiceReason", "choiceUse", "killReason", "profile", "project", "projectReason", "tool", "toolReason", "writeRepo"]);
     for (const id of fields) expect(body, id).toMatch(new RegExp(`<label>[^<]*<(?:input|select) id="${id}"`));
   });
 
@@ -63,6 +63,15 @@ describe("the console page's layout (the design pass of 2026-11-25)", () => {
     expect(sends).toHaveLength(2);
     for (const send of sends) expect(send).toContain("signal: AbortSignal.timeout(ACTION_TIMEOUT_MS)");
     expect(script).toMatch(/const ACTION_TIMEOUT_MS = \d+;/);
+  });
+
+  it("lets the owner record a client's choice, and shows each project's choice as text in a table", () => {
+    expect(body).toContain('<table id="projects"');
+    expect(body).toContain('<button id="choice">');
+    expect(page).toContain('act({ action: "set_client_choice", project: val("choiceProject"), aiUse: $("choiceUse").value, limit: $("choiceLimit").value, reason: val("choiceReason") }');
+    expect(page).toContain('fetch("/console/projects")');
+    // The limits offered stop below client personal data, which no project may hold while the gate is closed.
+    expect([...body.matchAll(/<select id="choiceLimit">(.*?)<\/select>/gs)][0]?.[1]?.match(/value="([^"]*)"/g)).toEqual(['value=""', 'value="public"', 'value="internal"', 'value="confidential"']);
   });
 
   it("shows figures in tables, with numbers to the right, and a remark under the name it belongs to", () => {
