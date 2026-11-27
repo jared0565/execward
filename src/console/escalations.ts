@@ -11,6 +11,7 @@
  * time limit is closed in its safe state. Nothing is ever approved by default.
  */
 import type { AuditLog } from "../audit/log";
+import { RETENTION } from "../limits";
 import type { Escalation } from "../code-tool/attempts";
 import type { RunReport } from "../contracts/code-tool";
 import type { ExecWardError } from "../contracts/errors";
@@ -209,11 +210,30 @@ export interface EscalationStore {
   put(item: EscalationItem): Promise<void>;
   get(id: string): Promise<EscalationItem | undefined>;
   all(): Promise<EscalationItem[]>;
+  /** Removes one item for good: one past its keeping time, or one of a project whose records are being deleted. */
+  remove(id: string): Promise<void>;
 }
 
 export function memoryEscalationStore(): EscalationStore & { readonly items: Map<string, EscalationItem> } {
   const items = new Map<string, EscalationItem>();
-  return { items, put: async (item) => void items.set(item.id, item), get: async (id) => items.get(id), all: async () => [...items.values()] };
+  return { items, put: async (item) => void items.set(item.id, item), get: async (id) => items.get(id), all: async () => [...items.values()], remove: async (id) => void items.delete(id) };
+}
+
+/**
+ * Removes closed items raised more than `keepDays` ago and returns how many (the owner's
+ * decision of 2026-11-27). An item can hold an error's words, a run report and figures, so
+ * it is kept no longer than the audit log keeps an entry. An open item is never removed:
+ * it is still waiting for the owner.
+ */
+export async function trimEscalations(store: Pick<EscalationStore, "all" | "remove">, now: number, keepDays: number = RETENTION.recordDays): Promise<number> {
+  const before = now - keepDays * 24 * HOUR;
+  let removed = 0;
+  for (const item of await store.all()) {
+    if (item.status === "open" || item.createdAt >= before) continue;
+    await store.remove(item.id);
+    removed += 1;
+  }
+  return removed;
 }
 
 /** A choice made this often is offered back as a rule. It is never adopted on its own (FR-46). */

@@ -2,9 +2,9 @@
  * Quotas, spend caps and run admission (task 1.3.8, FR-27).
  *
  * Counting is behind `QuotaStore`, so the rules here do not care where the
- * numbers live. `memoryQuotaStore` is complete and is what the tests use. A
- * durable store shared by every Worker instance is still owed; until it
- * exists these limits hold only within one process.
+ * numbers live. `memoryQuotaStore` is complete and is what the tests use.
+ * Production uses the database-backed store, shared by every Worker instance
+ * (`d1QuotaStore` in ../storage/d1-stores.ts).
  *
  * Fail closed: if the store cannot answer, the run or call is refused.
  */

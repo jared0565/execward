@@ -393,7 +393,7 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
   it("does the daily round once a day, at the first firing, and only the frequent round after that", async () => {
     const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000, MORNING + 10 * 60_000, MORNING + DAY] });
     expect(reply.runs.map((run) => run.daily !== undefined)).toEqual([true, false, false, true]);
-    expect(reply.runs[0]?.daily?.map((job) => job.job)).toEqual(["apply_retention", "check_reviewer", "sweep_counters", "trim_stats"]);
+    expect(reply.runs[0]?.daily?.map((job) => job.job)).toEqual(["apply_retention", "check_reviewer", "sweep_counters", "trim_stats", "trim_queue"]);
     expect(reply.runs[0]?.daily?.find((job) => job.job === "trim_stats")).toMatchObject({ ok: true });
     // No verification key in this Worker: the reviewer could not be asked, so the check counted nothing.
     expect(reply.runs[0]?.daily?.find((job) => job.job === "check_reviewer")).toMatchObject({ ok: true, detail: "the reviewer could not be asked in 5 of 5 cases; nothing counted" });
@@ -415,6 +415,20 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
     expect(reply.chain).toMatchObject({ ok: true });
   });
 
+  it("deletes nothing while the kill switch is set: the old text stays, and the day is still backed up", async () => {
+    const reply = await timer({ times: [MORNING], oldEntryDays: 8, killed: true });
+    const held = "held: the kill switch is set, so nothing was deleted";
+    expect(reply.runs[0]?.daily?.filter((job) => job.job !== "check_reviewer")).toEqual([
+      { job: "apply_retention", ok: true, detail: held },
+      { job: "sweep_counters", ok: true, detail: held },
+      { job: "trim_stats", ok: true, detail: held },
+      { job: "trim_queue", ok: true, detail: held },
+    ]);
+    expect(reply.oldTextRemoved).toBe(false);
+    expect(reply.runs[0]?.backup).toMatchObject({ key: "backups/2027-01-15.json" });
+    expect(reply.chain).toMatchObject({ ok: true });
+  });
+
   it("tries the daily round again at the next firing when the backup failed", async () => {
     const reply = await timer({ times: [MORNING, MORNING + 5 * 60_000], brokenBucket: true });
     expect(reply.runs.map((run) => run.backup)).toEqual([{ error: "the bucket refused the write" }, { error: "the bucket refused the write" }]);
@@ -430,10 +444,10 @@ describe("the production Worker's timer (tasks 1.4.4, 1.4.5, 1.6.8)", { timeout:
     const reply = await timer({ times: [MORNING, MORNING + FIVE, MORNING + 2 * FIVE, MORNING + 3 * FIVE], oldEntryDays: 8, retentionFailsFor: 2 });
     const jobs = reply.runs.map((run) => run.daily?.map((job) => `${job.job}:${job.ok ? "ok" : "failed"}`));
     expect(jobs).toEqual([
-      ["apply_retention:failed", "check_reviewer:ok", "sweep_counters:ok", "trim_stats:ok"],
+      ["apply_retention:failed", "check_reviewer:ok", "sweep_counters:ok", "trim_stats:ok", "trim_queue:ok"],
       // The day is backed up, so only the jobs that are safe to repeat run again: no second check, no second email.
-      ["apply_retention:failed", "sweep_counters:ok", "trim_stats:ok"],
-      ["apply_retention:ok", "sweep_counters:ok", "trim_stats:ok"],
+      ["apply_retention:failed", "sweep_counters:ok", "trim_stats:ok", "trim_queue:ok"],
+      ["apply_retention:ok", "sweep_counters:ok", "trim_stats:ok", "trim_queue:ok"],
       undefined,
     ]);
     expect(reply.runs.map((run) => run.backup?.key)).toEqual(["backups/2027-01-15.json", undefined, undefined, undefined]);

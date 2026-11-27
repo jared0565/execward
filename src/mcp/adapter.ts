@@ -14,8 +14,8 @@
  *
  * This file does no sign-in. The library never reads a credential from a
  * request, and nor does this: whoever mounts the handler must have established
- * who is calling first, and passes that in as the caller. Until task 2.1.2
- * builds sign-in, it is mounted only on the test Worker, behind its secret.
+ * who is calling first, and passes that in as the caller. Production mounts
+ * it behind Cloudflare Access (./production.ts, task 2.1.2); the test Worker, behind its secret.
  */
 import { createMcpHandler, McpServer, type StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import { attemptGate, closedGate, type AttemptGate } from "../code-tool/attempts";

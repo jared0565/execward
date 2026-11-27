@@ -12,7 +12,7 @@ on 2026-11-26. If the two differ, the owner's edits there are the newer.
 
 Changed here on 2026-11-27, after a check of this file against the code, and **not yet
 carried into the review copy**: what the second AI model is sent (three places), one more
-row in "How long it is kept", and two new notes for the owner at the end.
+row in "How long it is kept", and four new notes for the owner at the end.
 
 ## Blanks only the owner can fill
 
@@ -84,7 +84,7 @@ Notification emails about this system contain only a link. They never contain yo
 | The full text of scripts and what they asked for | 7 days |
 | A record that each action happened, without its content | 90 days |
 | The full text for any task that raised a security concern | 90 days |
-| Items waiting for my decision, with the error or figures they are about | No time limit yet **[see the notes for the owner]** |
+| Items raised for my decision, with the error or figures they are about | While they wait for me, then up to 90 days from when they were raised |
 | Backup copies of these records | 7 days, then deleted |
 
 Each provider keeps what it receives for its own period, set out in its terms.
@@ -134,15 +134,18 @@ To ask, send an email to **[the admin email address]**.
   is a design change, not a wording change.
 - **Backups** are kept 7 days (docs/decisions/1.4.5-backups.md). The notice says so. If
   the keep time changes, change the notice.
-- **Deleting a client's records has no command yet** (found 2026-11-27). The notice
-  says you can do it "at any time". The function exists and is tested
-  (`deleteProjectLogs` in `src/audit/log.ts`), but nothing in the console or in
-  `scripts/` runs it, and it clears the audit log only. Build that before sending this
-  notice, or change the sentence.
-- **Items in your queue are never removed** (found 2026-11-27). An item can hold an
-  error's text, the run report and, for a figure that failed its cross-check, both
-  values. Nothing deletes from that table, retention does not cover it, deletion on
-  request does not cover it, and it is in the daily backup. That is a gap in the design,
-  not in the wording; the row added to "How long it is kept" says what is true today.
+- **Deleting a client's records is a command you run** (built 2026-11-27):
+  `npm run project:erase -- --project NAME --yes --reason "who asked, and when"`, from
+  a computer signed in to Cloudflare. It clears the text of the project's log entries
+  and its closed queue items. It refuses while an item of that project is still waiting
+  for you, so "at any time" means once you have dealt with those. It has not been run
+  on the live system yet.
+- **Items in your queue** can hold an error's text, the run report and, for a figure
+  that failed its cross-check, both values. Since 2026-11-27 a closed item is removed 90
+  days after it was raised, and the deletion command removes a project's closed items.
+  An item still waiting for you is kept until you deal with it.
+- **During an incident nothing is deleted.** While the kill switch is set the periods
+  above stop running, so that evidence is kept. If that could ever matter to a client,
+  say so.
 - **Who writes the requirements.** Through Claude Code the list of what a result must
   satisfy is written by the AI model doing the work, not by you. The notice now says so.

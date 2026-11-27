@@ -181,6 +181,7 @@ describe("scheduled housekeeping", () => {
       { job: "apply_retention", ok: true, detail: "1 entries had their text removed, 0 entries removed" },
       { job: "send_digest", ok: true, detail: "sent" },
       { job: "sweep_counters", ok: true, detail: "swept" },
+      { job: "trim_queue", ok: true, detail: "0 closed items removed" },
     ]);
     expect(audit.entries[0]?.content).toBeNull();
     expect(await verifyChain(audit.entries, await audit.anchor())).toMatchObject({ ok: true });
@@ -200,13 +201,58 @@ describe("scheduled housekeeping", () => {
       { job: "apply_retention", ok: false, detail: "the audit table is locked" },
       { job: "send_digest", ok: true, detail: "nothing waiting" },
       { job: "sweep_counters", ok: false, detail: "the counters table is missing" },
+      { job: "trim_queue", ok: true, detail: "0 closed items removed" },
     ]);
+  });
+
+  it("removes a closed queue item 90 days after it was raised, and never an open one", async () => {
+    const { deps, queue, escalations, advance } = setup();
+    const closed = await queue.raise({ trigger: "repeated_failure", project: "work", runId: "run-1" });
+    const waiting = await queue.raise({ trigger: "security_exception", project: "work", runId: "run-2" });
+    // The first runs out of time and is closed; the security exception has no time limit and stays open.
+    advance(5 * HOUR);
+    await runMaintenance(deps, "frequent");
+    advance(89 * DAY);
+    expect((await runMaintenance(deps, "daily")).at(-1)).toEqual({ job: "trim_queue", ok: true, detail: "0 closed items removed" });
+    advance(DAY);
+    expect((await runMaintenance(deps, "daily")).at(-1)).toEqual({ job: "trim_queue", ok: true, detail: "1 closed items removed" });
+    expect([...escalations.items.keys()]).toEqual([waiting.id]);
+    expect(escalations.items.has(closed.id)).toBe(false);
+  });
+
+  it("deletes nothing while the kill switch is set, and says so; the digest still goes", async () => {
+    const { deps, queue, audit, log, escalations, swept, sent, advance } = setup();
+    await log.record({ kind: "test", runId: "old", project: "work", body: { text: "evidence" } });
+    await queue.raise({ trigger: "repeated_failure", project: "work", runId: "run-1" });
+    advance(5 * HOUR);
+    await runMaintenance(deps, "frequent");
+    advance(91 * DAY);
+    await queue.raise({ trigger: "definition_changed", project: "work", runId: "run-3" });
+    const held = "held: the kill switch is set, so nothing was deleted";
+    expect(await runMaintenance({ ...deps, trimStats: async () => Promise.reject(new Error("must not be called")), held: async () => true }, "daily")).toEqual([
+      { job: "apply_retention", ok: true, detail: held },
+      { job: "send_digest", ok: true, detail: "sent" },
+      { job: "sweep_counters", ok: true, detail: held },
+      { job: "trim_stats", ok: true, detail: held },
+      { job: "trim_queue", ok: true, detail: held },
+    ]);
+    expect(audit.entries[0]?.content).not.toBeNull();
+    expect(escalations.items.size).toBe(2);
+    expect(swept).toEqual([]);
+    expect(sent.map((email) => email.subject)).toEqual([DIGEST_SUBJECT]);
+    // Not knowing whether the switch is set is treated as set.
+    const unknown = await runMaintenance({ ...deps, held: async () => Promise.reject(new Error("the switches could not be read")) }, "daily");
+    expect(unknown[0]).toEqual({ job: "apply_retention", ok: true, detail: held });
+    // With the switch clear again, the next round does what was held.
+    const after = await runMaintenance({ ...deps, held: async () => false }, "daily");
+    expect(after[0]).toEqual({ job: "apply_retention", ok: true, detail: "0 entries had their text removed, 3 entries removed" });
+    expect(after.at(-1)).toEqual({ job: "trim_queue", ok: true, detail: "1 closed items removed" });
   });
 
   it("runs without a notifier or a sweeper", async () => {
     const { deps } = setup();
     const bare = { audit: deps.audit, queue: deps.queue, escalations: deps.escalations, now: deps.now };
     expect((await runMaintenance(bare, "frequent")).map((result) => result.job)).toEqual(["expire_escalations"]);
-    expect((await runMaintenance(bare, "daily")).map((result) => result.job)).toEqual(["apply_retention"]);
+    expect((await runMaintenance(bare, "daily")).map((result) => result.job)).toEqual(["apply_retention", "trim_queue"]);
   });
 });

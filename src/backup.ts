@@ -87,8 +87,11 @@ async function readTable(db: BackupDatabase, table: string): Promise<Row[]> {
   }
 }
 
-/** Writes today's backup, replacing an earlier one from the same day, then deletes backups past their keep time. */
-export async function backUp(db: BackupDatabase, bucket: BackupBucket, now: number): Promise<BackupResult> {
+/**
+ * Writes today's backup, replacing an earlier one from the same day, then deletes backups past their keep time.
+ * With `keepOld`, nothing older is deleted: the timer passes it while the kill switch is set.
+ */
+export async function backUp(db: BackupDatabase, bucket: BackupBucket, now: number, options: { readonly keepOld?: boolean } = {}): Promise<BackupResult> {
   const tables: Record<string, Row[]> = {};
   for (const table of BACKUP_TABLES) tables[table] = await readTable(db, table);
   const document: BackupDocument = { version: 1, takenAt: new Date(now).toISOString(), tables };
@@ -99,7 +102,7 @@ export async function backUp(db: BackupDatabase, bucket: BackupBucket, now: numb
   // Read back before anything older is deleted: a backup that cannot be read is not one.
   const stored = await bucket.get(key);
   if (!stored || (await sha256Hex(await stored.text())) !== sha256) throw new BackupError("the backup that was written does not read back the same");
-  const pruned = await pruneBackups(bucket, now);
+  const pruned = options.keepOld ? 0 : await pruneBackups(bucket, now);
   return { key, rows: Object.fromEntries(Object.entries(tables).map(([table, rows]) => [table, rows.length])), bytes: new TextEncoder().encode(text).length, sha256, pruned };
 }
 

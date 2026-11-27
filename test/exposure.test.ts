@@ -15,6 +15,7 @@ import {
 import { memoryPolicyStore } from "../src/broker/policy-store";
 import { memoryQuotaStore } from "../src/broker/quotas";
 import { attemptGate } from "../src/code-tool/attempts";
+import { attemptKey, memoryAttemptStore, storedAttemptGate } from "../src/code-tool/stored-attempts";
 import { INITIAL_CONTROL_STATE, memoryControlStore } from "../src/console/control";
 import { memoryMeterSink, meter } from "../src/meter/meter";
 import { memoryMetricsSink } from "../src/metrics/metrics";
@@ -281,10 +282,24 @@ describe("the code tool with every control in place", () => {
       const counting: Executor = { name: "scripted", execute: async () => (executed++, { status: "completed", result: 1, logs: [], truncated: false }) };
       const { serve, logged, upstreamCalls } = service(counting, chosen({ aiUse: "off" }));
       const output = await serve(input("client"), { attempts: attemptGate(), providerRoute: "anthropic_api_commercial" });
-      expect(output).toMatchObject({ status: "refused", error: { code: "policy_denied", message: expect.stringContaining("the client of this project has asked that AI tools are not used on it") as string } });
+      expect(output).toMatchObject({ status: "refused", error: { code: "code_mode_off", message: expect.stringContaining("the client of this project has asked that AI tools are not used on it") as string } });
       expect(executed).toBe(0);
       expect(upstreamCalls).toEqual([]);
       expect(logged()).toMatchObject([{ kind: "run_refused" }]);
+    });
+
+    it("treats that refusal as a switch, not a security failure: nothing is raised and the project is not closed to the caller", async () => {
+      const { serve } = service(calling("github_get_file"), chosen({ aiUse: "off" }));
+      const raised: string[] = [];
+      const store = memoryAttemptStore();
+      const gate = () => storedAttemptGate({ store, now: () => 0, escalate: async (escalation) => (raised.push(escalation.reason), "item-1") }, attemptKey("owner:1", "client"));
+      for (let call = 0; call < 4; call += 1) {
+        const output = await serve(input("client"), { attempts: await gate(), providerRoute: "anthropic_api_commercial" });
+        // Every call gets the client's reason, never "closed by a security failure".
+        expect(output).toMatchObject({ status: "refused", error: { code: "code_mode_off", message: expect.stringContaining("the client of this project has asked") as string } });
+      }
+      expect(raised).toEqual([]);
+      expect((await gate()).blocked()).toBeUndefined();
     });
 
     it("still runs a project whose client has left AI use on", async () => {

@@ -22,6 +22,7 @@
     "check:deployed": "tsx scripts/check-deployed.ts",
     "audit:export": "tsx scripts/export-audit.ts",
     "emergency:stop": "tsx scripts/emergency-stop.ts",
+    "project:erase": "tsx scripts/erase-project.ts",
     "setup:github": "tsx scripts/setup-github.ts",
     "repo:setup": "tsx scripts/repo-setup.ts"
   },

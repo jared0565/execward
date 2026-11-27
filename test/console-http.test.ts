@@ -405,6 +405,19 @@ describe("sending email (task 1.6.7)", () => {
     expect(sent).toBe(4);
   });
 
+  it("writes once, and only once, about an urgent item that has no reminder period", async () => {
+    const { queue } = setup();
+    // A tier-2 action is urgent but is not reminded about. It is not in the digest either, so
+    // without its first email the owner would hear nothing.
+    const item = await queue.raise({ trigger: "tier2_action", project: "acme", runId: "run-1" });
+    const TICK = 5 * 60 * 1000;
+    let sent = 0;
+    for (let now = item.createdAt + 2 * 60 * 1000; now <= item.createdAt + 3 * HOUR; now += TICK) {
+      await notifier({ mailer: { send: async () => void (sent += 1) }, baseUrl: CONSOLE_URL, tickMs: TICK }).remind([item], now);
+    }
+    expect(sent).toBe(1);
+  });
+
   it("does not write again between the first email and the first hour, or about an item that is not urgent", async () => {
     const { queue } = setup();
     const urgent = await queue.raise({ trigger: "security_exception", project: "acme", runId: "run-1" });
