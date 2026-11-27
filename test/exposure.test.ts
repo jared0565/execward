@@ -208,6 +208,8 @@ describe("the code tool with every control in place", () => {
     let run = 0;
     const serve = codeToolService({
       executor,
+      // Chosen, not left out: a project with no record runs as `public` here.
+      requireKnownProject: false,
       policy: memoryPolicyStore([record("list_issues", { dataClass: "internal" }), record("get_file", { dataClass: "confidential", sensitive: true })]),
       projects: memoryProjectStore([
         { project: "work", dataClass: "internal" },

@@ -31,9 +31,11 @@ export interface CodeToolServiceDeps {
    * looked up for it. Set where the project's name comes from the calling model (the MCP
    * server): otherwise a model could make up names, each with a retry limit, a pause
    * state and a spend cap of its own. (Second review, finding F1; the owner's decision
-   * of 2026-11-26.) Left out, a project with no record is `public`, as FR-32 says.
+   * of 2026-11-26.) When `false`, a project with no record is `public`, as FR-32 says.
+   * Required, so that letting unknown projects run is a choice someone made and not an
+   * omission (model-review finding `eafe3706f800`).
    */
-  readonly requireKnownProject?: boolean;
+  readonly requireKnownProject: boolean;
   readonly quotas: QuotaStore;
   readonly audit: AuditStore;
   readonly upstream: Upstream;

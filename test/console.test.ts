@@ -216,6 +216,8 @@ describe("what the switches do to a run (FR-16, FR-17, FR-27)", () => {
     };
     const serve = codeToolService({
       executor,
+      // Chosen, not left out: a project with no record runs as `public` here.
+      requireKnownProject: false,
       policy: memoryPolicyStore([record("list_issues", { dataClass: "public" }), record("get_commit", { dataClass: "public" })]),
       projects: memoryProjectStore([{ project: "work", dataClass: "internal" }]),
       quotas: memoryQuotaStore(),

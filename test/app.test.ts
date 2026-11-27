@@ -53,6 +53,8 @@ function app(turns: readonly (ModelTurn | Error)[], options: { codeMode?: () => 
   };
   const codeTool = codeToolService({
     executor: options.executor ?? counting,
+    // Chosen, not left out: a project with no record runs as `public` here.
+    requireKnownProject: false,
     policy: memoryPolicyStore([record("list_issues", { dataClass: "internal" })]),
     projects: memoryProjectStore([{ project: "work", dataClass: "internal" }]),
     quotas: memoryQuotaStore(),

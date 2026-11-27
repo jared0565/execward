@@ -165,6 +165,20 @@ describe("this repository (task 1.1.3)", () => {
     }
   });
 
+  it("keeps the release's write token away from installed packages and the tests (finding 58915a7aefae)", () => {
+    const workflow = readFileSync(".github/workflows/release.yml", "utf8").replace(/\r\n/g, "\n");
+    const at = workflow.indexOf("\n  publish:\n");
+    expect(at).toBeGreaterThan(0);
+    const build = workflow.slice(0, at);
+    const publish = workflow.slice(at);
+    // Only the publishing job may write, and it runs nothing from the repository or its packages.
+    expect(build).not.toContain("contents: write");
+    expect(publish).toContain("contents: write");
+    expect(publish).toContain("needs: build");
+    expect(publish).not.toMatch(/actions\/checkout|npm |npx |node /);
+    expect(build).toContain("npm test");
+  });
+
   it("runs the supply-chain gate and builds an SBOM in CI and in the release workflow", () => {
     for (const file of ["ci.yml", "release.yml"]) {
       const workflow = readFileSync(`.github/workflows/${file}`, "utf8");

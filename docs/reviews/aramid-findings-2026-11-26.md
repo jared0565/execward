@@ -71,6 +71,25 @@ cheap, so they were fixed the same way as the six above. Each has a test.
 
 Not seen on production: none of these could be shown there without planting bad data.
 
+## Five of the less urgent ones, fixed on 2026-11-27
+
+The project owner chose on 2026-11-27 to fix five of the seven listed above under "Real,
+less urgent, not fixed". That table is left as it was written.
+
+| Finding | Fix |
+|---|---|
+| `58915a7aefae` | The release workflow is two jobs. The one that installs packages and runs the tests has a token that only reads. The one that can write runs nothing from the repository: it attaches the finished SBOM. `advisories.yml` is unchanged: its token can open issues, not write to the repository |
+| `db75312e210b` | The write-refusal test also reads the same repository with the same credential and expects 200, so a 404 to the write cannot come from a wrong name |
+| `09213084a80a` | A sandbox failure counts as a CPU or memory limit only when its whole message is the platform's. Whether a script could have produced those words was still not tested; it no longer matters |
+| `eafe3706f800` | Whether a project with no record may run is now something every entry point must state. Production states that it may not. The adversarial target and the test Worker state that it may |
+| `1a8dc5ed3d70` | `check:deployed` asks each of the two addresses for its front page with no sign-in and fails unless it is turned away. Run against production on 2026-11-27: the console redirected to Access's sign-in page and the MCP server answered 401 |
+
+Still open from that table: `ef7e6be88484` (a sensitive tool's rejected result tells the
+script which of two error codes applied) and `c42d2eb11512` (nothing ties the live code
+to a reviewed commit).
+
+Not shown by a run: the release workflow, which runs only when a version tag is pushed.
+
 ## The other 108
 
 106 are test mutants that survived: a number or a condition was changed and no test

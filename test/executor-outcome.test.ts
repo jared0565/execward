@@ -1,6 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { ExecutionLimits } from "../src/executor";
-import { capLogs, cutToBytes, interpretReport } from "../src/executor/outcome";
+import { capLogs, cutToBytes, interpretReport, platformLimit } from "../src/executor/outcome";
+
+describe("telling the platform's limit messages from any other failure", () => {
+  it("takes the platform's own two messages, whole", () => {
+    expect(platformLimit("Worker exceeded CPU time limit.")).toBe("cpu");
+    expect(platformLimit("Worker exceeded memory limit.")).toBe("memory");
+  });
+
+  it.each([
+    "the tool said: Worker exceeded CPU time limit.",
+    "Worker exceeded CPU time limit. Also, something else broke",
+    "internal error\nWorker exceeded memory limit.",
+    "worker exceeded memory limit.",
+    "",
+  ])("does not take %j for a limit: it only contains the words, or is something else", (message) => {
+    expect(platformLimit(message)).toBeUndefined();
+  });
+});
 import { buildSandboxModules, RUNNER_MODULE, SCRIPT_MODULE } from "../src/executor/sandbox-modules";
 
 const LIMITS: ExecutionLimits = { cpuMs: 50, wallClockMs: 1_000, maxHostCalls: 10, maxResultBytes: 64 };
