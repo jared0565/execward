@@ -1,6 +1,39 @@
 import { describe, expect, it } from "vitest";
 import { COMPATIBILITY_DATE } from "../src/worker/bindings";
-import { deployedProblems, type DeployedVersion } from "../src/worker/deployed-check";
+import { deployedProblems, exposureProblems, type DeployedVersion } from "../src/worker/deployed-check";
+
+describe("who can reach the deployed Worker (model-review finding 1a8dc5ed3d70)", () => {
+  const SIGN_IN = "https://team.cloudflareaccess.com/cdn-cgi/access/login/console.execward.com?kid=x";
+  const guarded = [
+    { host: "console.execward.com", status: 302, location: SIGN_IN },
+    { host: "mcp.execward.com", status: 401 },
+  ];
+
+  it("accepts addresses that refuse a visitor who has not signed in, or send them to Access's sign-in page", () => {
+    expect(exposureProblems(guarded)).toEqual([]);
+    expect(exposureProblems([{ host: "console.execward.com", status: 403 }, guarded[1]!])).toEqual([]);
+  });
+
+  it("reports an address that answers such a visitor", () => {
+    expect(exposureProblems([{ host: "console.execward.com", status: 200 }, guarded[1]!])).toEqual(["the address console.execward.com answered a visitor who has not signed in with status 200, not a refusal"]);
+    expect(exposureProblems([guarded[0]!, { host: "mcp.execward.com", status: 404 }])).toHaveLength(1);
+  });
+
+  it.each([
+    ["no address", undefined],
+    ["another site", "https://elsewhere.example/login"],
+    ["a site whose name only contains Access's", "https://cloudflareaccess.com.evil.example/login"],
+    ["something that is not an address", "/console"],
+  ])("reports a redirect to %s", (_name, location) => {
+    const probe = { host: "console.execward.com", status: 302, ...(location === undefined ? {} : { location }) };
+    expect(exposureProblems([probe, guarded[1]!])).toEqual(["the address console.execward.com sends a visitor who has not signed in somewhere other than Cloudflare Access's sign-in page"]);
+  });
+
+  it("reports an address that was not checked or could not be reached, since nothing is known about it", () => {
+    expect(exposureProblems([guarded[0]!])).toEqual(["the address mcp.execward.com was not checked"]);
+    expect(exposureProblems([guarded[0]!, { host: "mcp.execward.com", status: undefined }])).toEqual(["the address mcp.execward.com could not be reached, so it is not known whether it is guarded"]);
+  });
+});
 
 /** What Cloudflare reported for the live Worker on 2026-11-23. */
 function live(): DeployedVersion {

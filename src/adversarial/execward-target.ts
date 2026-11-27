@@ -94,6 +94,8 @@ export function execwardTarget(deps: { readonly executor: Executor; readonly now
 
     const service = codeToolService({
       executor: deps.executor,
+      // The adversarial runs name projects with no record on purpose; they run as `public`.
+      requireKnownProject: false,
       policy: memoryPolicyStore(records),
       // Confidential, so a case that reads confidential data is judged on where the data goes next.
       projects: memoryProjectStore([{ project: PROJECT, dataClass: "confidential" }]),

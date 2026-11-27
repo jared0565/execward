@@ -7,7 +7,7 @@
  * Cloudflare dashboard. This does: it reads the bindings of the version that
  * is live, as the platform reports them.
  */
-import { ALLOWED_BINDINGS, ALLOWED_SECRETS, COMPATIBILITY_DATE, type AllowedBinding } from "./bindings";
+import { ALLOWED_BINDINGS, ALLOWED_ROUTES, ALLOWED_SECRETS, COMPATIBILITY_DATE, type AllowedBinding } from "./bindings";
 
 /** One binding of a deployed version, as `wrangler versions view --json` reports it. */
 export interface DeployedBinding {
@@ -60,5 +60,49 @@ export function deployedProblems(version: DeployedVersion, allowed: readonly All
     if (!allowedSecrets.includes(secret)) problems.push(`the deployed Worker holds a secret named "${secret}" that is not on the allowlist`);
   }
   if (version.compatibilityDate !== COMPATIBILITY_DATE) problems.push(`the deployed compatibility date is ${JSON.stringify(version.compatibilityDate)}, not ${COMPATIBILITY_DATE}`);
+  return problems;
+}
+
+/** What one of the Worker's addresses answered to a request with no sign-in. `status` is undefined when it could not be reached. */
+export interface AddressProbe {
+  readonly host: string;
+  readonly status: number | undefined;
+  /** The `Location` header, when the answer was a redirect. */
+  readonly location?: string;
+}
+
+/**
+ * Problems with how the Worker's addresses answer a visitor who has not signed in.
+ * The allowlist comparison above says what the Worker can reach; it does not say who can
+ * reach the Worker. Each address must turn such a visitor away: a refusal (401 or 403),
+ * or a redirect to Cloudflare Access's sign-in page. Anything else means the address is
+ * open, or is not being checked at all.
+ */
+export function exposureProblems(probes: readonly AddressProbe[], hosts: readonly string[] = ALLOWED_ROUTES.map((route) => route.pattern)): string[] {
+  const problems: string[] = [];
+  for (const host of hosts) {
+    const probe = probes.find((candidate) => candidate.host === host);
+    if (probe === undefined) {
+      problems.push(`the address ${host} was not checked`);
+      continue;
+    }
+    if (probe.status === undefined) {
+      problems.push(`the address ${host} could not be reached, so it is not known whether it is guarded`);
+      continue;
+    }
+    if (probe.status === 401 || probe.status === 403) continue;
+    if (probe.status === 302 || probe.status === 303) {
+      let to: string | undefined;
+      try {
+        to = new URL(probe.location ?? "").hostname;
+      } catch {
+        to = undefined;
+      }
+      if (to !== undefined && to.endsWith(".cloudflareaccess.com")) continue;
+      problems.push(`the address ${host} sends a visitor who has not signed in somewhere other than Cloudflare Access's sign-in page`);
+      continue;
+    }
+    problems.push(`the address ${host} answered a visitor who has not signed in with status ${probe.status}, not a refusal`);
+  }
   return problems;
 }

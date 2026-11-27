@@ -117,3 +117,18 @@ export function interpretReport(report: unknown, limits: ExecutionLimits): Execu
     return fault("the sandbox returned a result that is not JSON", logs);
   }
 }
+
+/**
+ * The platform's two messages for an isolate it ended at a limit, whole. Matching the
+ * words anywhere in a message would let some other failure that carried them be taken
+ * for a limit, and a limit is an ordinary result where a fault is a security matter.
+ */
+const PLATFORM_CPU_LIMIT = /^Worker exceeded CPU time limit\.?$/;
+const PLATFORM_MEMORY_LIMIT = /^Worker exceeded memory limit\.?$/;
+
+/** Which platform limit a failed call's message reports, if it is exactly one of them. */
+export function platformLimit(message: string): "cpu" | "memory" | undefined {
+  if (PLATFORM_CPU_LIMIT.test(message)) return "cpu";
+  if (PLATFORM_MEMORY_LIMIT.test(message)) return "memory";
+  return undefined;
+}

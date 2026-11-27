@@ -108,7 +108,9 @@ describe("the GitHub connector on Cloudflare", { timeout: 60_000 }, () => {
   });
 
   it.skipIf(!configured)("holds a credential that GitHub refuses to write with (task 1.1.2)", async () => {
-    const { status } = await github<{ status: number }>({ writeProbe: { owner: OWNER, repo: REPO } });
+    const { status, readStatus } = await github<{ status: number; readStatus: number }>({ writeProbe: { owner: OWNER, repo: REPO } });
+    // The same credential reads the same repository, so the name is right and what follows is about writing.
+    expect(readStatus).toBe(200);
     // 403: the credential may not write. 404: it cannot see a write endpoint at all. 201 would mean it can write.
     expect([403, 404]).toContain(status);
   });

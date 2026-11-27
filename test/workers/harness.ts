@@ -234,6 +234,8 @@ async function databaseService(env: { LOADER: WorkerLoader; DB: D1Like }) {
   const auditStore = d1AuditStore(db);
   const service = codeToolService({
     executor: dynamicWorkerExecutor(env.LOADER),
+    // Chosen, not left out: a project with no record runs as `public` here.
+    requireKnownProject: false,
     policy: d1PolicyStore(env.DB),
     projects: d1ProjectStore(db),
     quotas: d1QuotaStore(db),
@@ -473,7 +475,13 @@ export default {
           headers: { accept: "application/vnd.github+json", authorization: `Bearer ${held}`, "user-agent": "execward", "content-type": "application/json" },
           body: JSON.stringify({ content: "execward write probe", encoding: "utf-8" }),
         });
-        return Response.json({ status: response.status });
+        // A 404 to the write means "refused" only if the same credential can read the same
+        // repository. A wrong name gives 404 to both, and would prove nothing.
+        const read = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
+          redirect: "manual",
+          headers: { accept: "application/vnd.github+json", authorization: `Bearer ${held}`, "user-agent": "execward" },
+        });
+        return Response.json({ status: response.status, readStatus: read.status });
       }
       const { pins, records } = await githubPinsAndPolicy();
       const pinned = registry({ pins, current: async (path) => pins.find((pin) => pin.path === path)?.definition });

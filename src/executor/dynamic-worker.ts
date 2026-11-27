@@ -17,7 +17,7 @@
 import { RpcTarget } from "cloudflare:workers";
 import type { ExecutionOutcome, ExecutionRequest, Executor, SandboxHost } from "../executor";
 import { COMPATIBILITY_DATE } from "../worker/bindings";
-import { failed, fault, interpretReport } from "./outcome";
+import { failed, fault, interpretReport, platformLimit } from "./outcome";
 import { RUNNER_MODULE, buildSandboxModules } from "./sandbox-modules";
 
 /** Turns the Node.js compatibility layer off inside the sandbox. */
@@ -134,11 +134,13 @@ export function dynamicWorkerExecutor(loader: WorkerLoader): Executor {
         // with these messages (seen on a deployed Worker, 2026-11-23). Those are the limits working,
         // not a fault. A script cannot produce them: an error it throws is caught inside the sandbox
         // and comes back in the report.
-        const platform = error instanceof Error ? error.message : "";
-        if (/exceeded CPU time limit/i.test(platform)) {
+        // The whole message must be the platform's, not merely contain its words: any other
+        // failure that happened to carry them would otherwise pass for an ordinary limit.
+        const limit = platformLimit(error instanceof Error ? error.message : "");
+        if (limit === "cpu") {
           return failed("timeout", `the run used more than its ${request.limits.cpuMs} ms of CPU time`);
         }
-        if (/exceeded memory limit/i.test(platform)) {
+        if (limit === "memory") {
           return failed("quota_exceeded", "the run used more memory than the sandbox allows");
         }
         // Rule 3 of the executor interface: on any fault, report it. Never run the script another way.
