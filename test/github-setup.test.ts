@@ -4,7 +4,7 @@ import type { ProjectRecord } from "../src/broker/exposure";
 import { GITHUB_TOOL_DEFINITIONS, githubPinsAndPolicy } from "../src/connectors/github";
 import type { PolicyRecord } from "../src/contracts/policy";
 import { policyRecordSchema } from "../src/contracts/policy";
-import { SETUP_ACTOR, setupGithub } from "../src/setup/github-setup";
+import { addProject, SETUP_ACTOR, setupGithub } from "../src/setup/github-setup";
 
 const NOW = Date.UTC(2026, 10, 24, 12);
 
@@ -21,6 +21,27 @@ function setup(over: { failAudit?: boolean } = {}) {
     : auditLog(store, () => NOW);
   return { policy, projects, store, deps: { putPolicy: async (record: PolicyRecord) => void policy.push(record), putProject: async (record: ProjectRecord) => void projects.push(record), audit } };
 }
+
+describe("adding a project while setting a repository up (task 2.1.11)", () => {
+  it("writes the project's record and an audit entry, and no tool's policy record", async () => {
+    const { policy, projects, store, deps } = setup();
+    expect(await addProject(deps, { project: "my-site", dataClass: "internal" })).toEqual({ project: "my-site", dataClass: "internal" });
+    expect(projects).toEqual([{ project: "my-site", dataClass: "internal" }]);
+    // A policy the owner changed by hand is not put back by setting a repository up.
+    expect(policy).toEqual([]);
+    expect(JSON.parse(store.entries.at(-1)?.content ?? "{}")).toMatchObject({ action: "add_project", by: SETUP_ACTOR, project: { project: "my-site", dataClass: "internal" } });
+  });
+
+  it("changes nothing when the audit log cannot be written, or the name or class is not allowed", async () => {
+    const down = setup({ failAudit: true });
+    await expect(addProject(down.deps, { project: "my-site", dataClass: "internal" })).rejects.toThrow();
+    expect(down.projects).toEqual([]);
+    const { projects, deps } = setup();
+    await expect(addProject(deps, { project: "My Site", dataClass: "internal" })).rejects.toThrow("the project name must be");
+    await expect(addProject(deps, { project: "my-site", dataClass: "client_personal" })).rejects.toThrow();
+    expect(projects).toEqual([]);
+  });
+});
 
 describe("connecting the GitHub tools to a deployment (task 2.1.10)", () => {
   it("writes every pinned GitHub tool, each read-only and matching the contract, and the one project", async () => {

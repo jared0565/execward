@@ -244,15 +244,15 @@ export interface GithubConnectorDeps {
  * named here and nothing else, in the places GitHub puts them, so a script written for
  * GitHub's own form still reads them.
  *
- *   "value"       text, a number, true, false or null
+ *   "value"       a number, true, false or null, or text: its first line, at most `TITLE_CHARS` long
  *   "values"      a list of those
- *   "first_line"  the first line of some text, at most `TITLE_CHARS` long: a title
+ *   "first_line"  the same cut, named for a field that is a title or a message
  *   { ... }       an object, with these fields of it
  *   [shape]       a list, each item in this form
  */
 type Shape = "value" | "values" | "first_line" | { readonly [field: string]: Shape } | readonly [Shape];
 
-/** The longest title handed over. */
+/** The longest text handed over by one of these tools. */
 const TITLE_CHARS = 200;
 
 const PERSON: Shape = { login: "value" };
@@ -401,12 +401,28 @@ const LEFT_OUT = Symbol("left out");
 
 const isPlain = (value: unknown): value is string | number | boolean | null => value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 
+/** The characters that end a line: line feed, carriage return, and the two Unicode line breaks. */
+const LINE_ENDS: ReadonlySet<number> = new Set([0x0a, 0x0d, 0x2028, 0x2029]);
+
+/**
+ * The first line of some text, at most `TITLE_CHARS` long. Every string these tools hand over
+ * goes through this, not only titles: a milestone's title, a signer's name, a branch name or an
+ * asset's name is written by a person too, and could otherwise carry any amount of text through
+ * a read that does not block a later outbound call. A lone carriage return and the two Unicode
+ * line breaks end a line as well.
+ */
+function oneLine(text: string): string {
+  let end = 0;
+  while (end < text.length && end < TITLE_CHARS && !LINE_ENDS.has(text.charCodeAt(end))) end += 1;
+  return text.slice(0, end);
+}
+
 function shaped(value: unknown, shape: Shape): unknown {
-  if (shape === "value") return isPlain(value) ? value : LEFT_OUT;
-  if (shape === "values") return Array.isArray(value) ? value.filter(isPlain) : LEFT_OUT;
+  if (shape === "value") return typeof value === "string" ? oneLine(value) : isPlain(value) ? value : LEFT_OUT;
+  if (shape === "values") return Array.isArray(value) ? value.filter(isPlain).map((item) => (typeof item === "string" ? oneLine(item) : item)) : LEFT_OUT;
   if (shape === "first_line") {
     if (value === null) return null;
-    return typeof value === "string" ? (value.split(/\r?\n/, 1)[0] ?? "").slice(0, TITLE_CHARS) : LEFT_OUT;
+    return typeof value === "string" ? oneLine(value) : LEFT_OUT;
   }
   if (Array.isArray(shape)) {
     if (!Array.isArray(value)) return LEFT_OUT;

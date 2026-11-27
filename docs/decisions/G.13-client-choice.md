@@ -75,8 +75,11 @@ project, AI use, the client's limit, and a reason.
 - **Only a project with a record.** The refusal does not repeat the name that was typed.
 - **Every change is in the audit log** as a `console_change` with the action
   `set_client_choice`, the reason, and the choice before and after.
-- **If the log cannot be written, the choice still stands** and the owner is told. A
-  client's request must take effect even when the log does not.
+- **If the log cannot be written, a tighter choice still stands** and the owner is told.
+  A client's request must take effect even when the log does not. **A change that lifts
+  a restriction is not made at all** unless it is on record first (changed 2026-11-27,
+  model-review finding `86eba5641095`): otherwise AI use could come back on a client's
+  work with nothing to show who lifted it.
 - **AI use on with no limit is no choice,** and clears what was recorded.
 - **The limits offered stop at confidential.** No project may hold client personal data
   while gate G.7 is closed.

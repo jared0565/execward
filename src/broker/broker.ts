@@ -393,7 +393,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         const shown = said.length > 500 ? `${said.slice(0, 500)}...` : said;
         // They are also data from that tool, so they count as a read of its class (FR-36).
         reads.push({ path, server: record.server, tool: record.tool, dataClass: record.dataClass, sensitive: record.sensitive, bytes: new TextEncoder().encode(shown).length, records: 0 });
-        throw new Error(`upstream_error: ${shown}`, { cause });
+        // No `cause`: it holds the whole message, more than the cut text that was counted as read.
+        // eslint-disable-next-line preserve-caught-error -- the cause is what must not be passed on
+        throw new Error(`upstream_error: ${shown}`);
       }
       // A result that arrives after the run ended is not handed over.
       guard(path);
@@ -414,7 +416,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
         // Any other tool's counts as a read of its data class (FR-36).
         const shown = why.length > 500 ? `${why.slice(0, 500)}...` : why;
         reads.push({ path, server: record.server, tool: record.tool, dataClass: record.dataClass, sensitive: record.sensitive, bytes: new TextEncoder().encode(shown).length, records: 0 });
-        throw new Error(shown, { cause });
+        // No `cause` here either, for the same reason.
+        // eslint-disable-next-line preserve-caught-error -- the cause is what must not be passed on
+        throw new Error(shown);
       }
       errorsInARow = 0;
       return accepted;
