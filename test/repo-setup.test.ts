@@ -171,6 +171,18 @@ describe("setting a repository up", () => {
     expect(ran.findIndex((line) => line.startsWith("claude mcp remove execward"))).toBeLessThan(ran.findIndex((line) => line.startsWith("claude mcp add")));
   });
 
+  it.each([
+    ["an address that only contains the right one", `execward:\n  Status: ✔ Connected\n  URL: https://attacker.example/?next=${URL_}\n`],
+    ["the right address with more on the end", `execward:\n  Status: ✔ Connected\n  URL: ${URL_}/other\n`],
+    ["the right address somewhere other than the URL line", `execward:\n  Status: ✔ Connected\n  Note: ${URL_}\n  URL: https://elsewhere.example/mcp\n`],
+  ])("does not take %s for the server", async (_name, server) => {
+    const checked = await setUpRepo(machine({ projects: ["my-site"], server }).deps, { ...OPTIONS, check: true });
+    expect(states(checked.steps)["MCP server"]).toBe("would_fix");
+    const { deps, ran } = machine({ projects: ["my-site"], server });
+    await setUpRepo(deps, OPTIONS);
+    expect(ran.some((line) => line.startsWith("claude mcp remove execward"))).toBe(true);
+  });
+
   it("says so when the server needs a sign-in, which only a person can do", async () => {
     const { deps } = machine({ projects: ["my-site"], server: `execward:\n  Status: ! Needs authentication\n  URL: ${URL_}\n` });
     const result = await setUpRepo(deps, OPTIONS);

@@ -108,6 +108,25 @@ describe("checking a tool's result (FR-35)", () => {
     expect(error.cause).toBeUndefined();
   });
 
+  it("sends no cause across with any other tool's error either: only the cut text that was counted as read", async () => {
+    const long = `the upstream said ${"x".repeat(900)} TAIL_PAST_THE_CUT`;
+    const failing = setup({
+      list_issues: () => {
+        throw new UpstreamToolError(long, 502);
+      },
+    });
+    const failed = (await failing.callTool("github_list_issues", {}).catch((caught: Error) => caught)) as Error;
+    expect(failed.message).toContain("upstream_error: the upstream said");
+    expect(failed.cause).toBeUndefined();
+    expect(failed.message).not.toContain("TAIL_PAST_THE_CUT");
+
+    const outputSchema = { type: "object", properties: { number: { type: "integer" } }, required: ["number"] };
+    const rejected = setup({ list_issues: () => ({ number: "not a number" }) }, { outputSchema });
+    const mismatch = (await rejected.callTool("github_list_issues", {}).catch((caught: Error) => caught)) as Error;
+    expect(mismatch.message).toContain("schema_invalid");
+    expect(mismatch.cause).toBeUndefined();
+  });
+
   it("is strict about unlisted fields in arguments and tolerant of them in results", () => {
     const schema = { type: "object", properties: { a: { type: "integer" } } };
     expect(checkAgainstSchema({ a: 1, b: 2 }, schema).problems.length).toBe(1);

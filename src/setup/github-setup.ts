@@ -31,6 +31,21 @@ export interface GithubSetupResult {
   readonly project: ProjectRecord;
 }
 
+/**
+ * Adds one project's record and nothing else, for `repo:setup --add-project`. The tool
+ * policy records are not touched: setting a repository up must not put back a policy the
+ * owner changed. (`setupGithub` does write them, and is run on purpose for that.)
+ */
+export async function addProject(deps: Pick<GithubSetupDeps, "putProject" | "audit">, wanted: { readonly project: string; readonly dataClass: DataClass }): Promise<ProjectRecord> {
+  if (!PROJECT_NAME.test(wanted.project)) throw new Error("the project name must be lower-case letters, digits, dots, dashes or underscores");
+  const project: ProjectRecord = { project: wanted.project, dataClass: wanted.dataClass };
+  checkProjectRecord(project);
+  // The audit entry first: if it cannot be written, nothing is changed.
+  await deps.audit.record({ kind: "console_change", runId: "none", project: project.project, body: { action: "add_project", by: SETUP_ACTOR, project } });
+  await deps.putProject(project);
+  return project;
+}
+
 export async function setupGithub(deps: GithubSetupDeps, wanted: { readonly project: string; readonly dataClass: DataClass }): Promise<GithubSetupResult> {
   if (!PROJECT_NAME.test(wanted.project)) throw new Error("the project name must be lower-case letters, digits, dots, dashes or underscores");
   const project: ProjectRecord = { project: wanted.project, dataClass: wanted.dataClass };

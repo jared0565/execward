@@ -21,9 +21,8 @@ import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { auditLog, d1AuditStore } from "../src/audit/log";
-import { putPolicyRecord } from "../src/broker/policy-store";
 import { DATA_CLASSES, type DataClass } from "../src/contracts/policy";
-import { setupGithub } from "../src/setup/github-setup";
+import { addProject } from "../src/setup/github-setup";
 import { reportLines, setUpRepo } from "../src/setup/repo-setup";
 import { cliDatabase, type SqlRunner } from "../src/storage/cli-database";
 import { putProjectRecord } from "../src/storage/d1-stores";
@@ -90,10 +89,8 @@ const result = await setUpRepo(
     ...(args.includes("--add-project")
       ? {
           addProject: async (project: string) => {
-            await setupGithub(
-              { putPolicy: (record) => putPolicyRecord(db, record), putProject: (record) => putProjectRecord(db, record), audit: auditLog(d1AuditStore(db), Date.now) },
-              { project, dataClass: dataClass as DataClass },
-            );
+            // The project's record only. The tools' policy records are `setup:github`'s to write.
+            await addProject({ putProject: (record) => putProjectRecord(db, record), audit: auditLog(d1AuditStore(db), Date.now) }, { project, dataClass: dataClass as DataClass });
           },
         }
       : {}),

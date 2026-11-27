@@ -87,6 +87,23 @@ describe("recording what a project's client has asked for (task G.13)", () => {
     expect((await store.get("acme"))?.clientChoice).toEqual({ aiUse: "off" });
   });
 
+  it("does not lift a restriction when the audit log cannot be written: nothing changes", async () => {
+    // Set while the log works, then try to relax it while the log is down.
+    const { choices, store } = setup();
+    await choices.set(OWNER, "acme", { aiUse: "off" }, "asked");
+    await choices.set(OWNER, "work", { aiUse: "on", limit: "public" }, "asked");
+    const down = clientChoices({ store, audit: { record: async () => Promise.reject(new Error("log down")) } as never, now: () => NOW });
+    const refusal = "nothing was changed: the audit log could not be written, and a client's restriction is not lifted without a record";
+    await expect(down.set(OWNER, "acme", undefined, "client changed their mind")).rejects.toThrow(refusal);
+    await expect(down.set(OWNER, "acme", { aiUse: "on", limit: "internal" }, "client changed their mind")).rejects.toThrow(refusal);
+    await expect(down.set(OWNER, "work", { aiUse: "on", limit: "internal" }, "client changed their mind")).rejects.toThrow(refusal);
+    expect((await store.get("acme"))?.clientChoice).toEqual({ aiUse: "off" });
+    expect((await store.get("work"))?.clientChoice).toEqual({ aiUse: "on", limit: "public" });
+    // A tighter choice still takes effect with the log down.
+    await expect(down.set(OWNER, "work", { aiUse: "off" }, "asked")).rejects.toThrow("the choice was recorded but could not be written to the audit log");
+    expect((await store.get("work"))?.clientChoice).toEqual({ aiUse: "off" });
+  });
+
   it.each<[string, Principal]>([
     ["nobody signed in", { kind: "anonymous" }],
     ["a model's credential", { kind: "model_client", id: "mcp" }],

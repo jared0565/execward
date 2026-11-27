@@ -8,6 +8,7 @@
  */
 import type { AuditLog } from "../audit/log";
 import { checkClientChoice, type ClientChoice, type ProjectRecord } from "../broker/exposure";
+import { DATA_CLASSES } from "../contracts/policy";
 import { ConsoleChangeError, requireOwner, type Principal } from "./console";
 
 export interface ClientChoiceStore {
@@ -32,6 +33,13 @@ export interface ClientChoices {
 }
 
 const same = (a: ClientChoice | undefined, b: ClientChoice | undefined): boolean => a?.aiUse === b?.aiUse && a?.limit === b?.limit;
+
+/** How much a choice leaves AI tools to do: nothing for "off", up to its limit otherwise, everything with no limit. */
+const room = (choice: ClientChoice | undefined): number => {
+  if (choice === undefined) return Infinity;
+  if (choice.aiUse === "off") return -1;
+  return choice.limit === undefined ? Infinity : DATA_CLASSES.indexOf(choice.limit);
+};
 
 export function clientChoices(deps: ClientChoiceDeps): ClientChoices {
   const authorised = (principal: Principal): string => {
@@ -61,17 +69,31 @@ export function clientChoices(deps: ClientChoiceDeps): ClientChoices {
       if (before === undefined) throw new ConsoleChangeError("that project has no record here, so nothing was changed. Use the project's exact name");
       // Nothing to change: no write, no log entry.
       if (same(before.clientChoice, choice)) return before;
-      if (!(await deps.store.setChoice(project, choice))) throw new ConsoleChangeError("that project has no record here, so nothing was changed. Use the project's exact name");
       const after: ProjectRecord = { project, dataClass: before.dataClass, ...(choice === undefined ? {} : { clientChoice: choice }) };
-      try {
-        await deps.audit.record({
+      const record = (): Promise<unknown> =>
+        deps.audit.record({
           kind: "console_change",
           runId: "none",
           project,
           body: { action: "set_client_choice", by, reason: why, before: before.clientChoice ?? null, after: choice ?? null },
         });
+      const gone = "that project has no record here, so nothing was changed. Use the project's exact name";
+      if (room(choice) > room(before.clientChoice)) {
+        // Lifting a restriction: on record first, and not done at all if it cannot be recorded.
+        // Otherwise AI use could come back on a client's work with nothing to show who lifted it.
+        try {
+          await record();
+        } catch {
+          throw new ConsoleChangeError("nothing was changed: the audit log could not be written, and a client's restriction is not lifted without a record");
+        }
+        if (!(await deps.store.setChoice(project, choice))) throw new ConsoleChangeError(gone);
+        return after;
+      }
+      if (!(await deps.store.setChoice(project, choice))) throw new ConsoleChangeError(gone);
+      try {
+        await record();
       } catch {
-        // The choice stands: a client's request must take effect even when the log does not. It is reported.
+        // A tighter choice stands: a client's request must take effect even when the log does not. It is reported.
         throw new ConsoleChangeError("the choice was recorded but could not be written to the audit log");
       }
       return after;

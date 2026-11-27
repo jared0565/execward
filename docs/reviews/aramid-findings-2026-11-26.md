@@ -55,6 +55,22 @@ The short name in the first column is the start of the finding's ID in the ledge
 | `d42981e700cf` | `docs/decisions/1.6-control-state.md` | It says direct calls go round the broker when Code Mode is off. On the MCP server a direct call is turned into a script and goes through the same service. The decision record's line is about the earlier test app, which this reading did not check |
 | `0171b65105a7` | `docs/decisions/1.3.3-argument-validation.md` | It is about an allowlisted host resolving to an internal address. Every tool's destination list is empty and the one connector sends only to GitHub's API host. It applies when a tool that fetches a URL is added |
 
+## Found after this reading, and fixed on 2026-11-27
+
+Six findings the model review raised on later changes (PRs 122 to 128). All six held
+when read against the code, were on the live path or the owner's own tools, and were
+cheap, so they were fixed the same way as the six above. Each has a test.
+
+| Finding | Where | What was wrong | Fix |
+|---|---|---|---|
+| `afa927ab9915`, `37a6e71536ca` | `src/setup/repo-setup.ts` | The setup command took the server for right if the wanted address appeared anywhere in Claude Code's output. Another address could contain it | It reads the `URL:` line and compares the whole address |
+| `547530176d83` | `scripts/repo-setup.ts` | `--add-project` also wrote every GitHub tool's policy record again, which would put back one the owner had changed | It writes the project's record only (`addProject`) |
+| `c131db41c7bc` | `src/broker/broker.ts` | A non-sensitive tool's error was cut to 500 characters and counted, but the whole original went along as the error's cause | No cause is attached |
+| `33d925c5a79e` | `src/connectors/github.ts` | The metadata-only tools cut titles and messages to one line of 200 characters, but not names, branches and other text a person can write. A lone carriage return or a Unicode line break did not end a line | Every text field is cut, and all four line endings count |
+| `86eba5641095` | `src/console/client-choice.ts` | A client's choice was stored before the audit entry, and stood if the entry failed, even when the change lifted a restriction | Lifting a restriction is recorded first and is not made if it cannot be recorded. A tighter choice still stands |
+
+Not seen on production: none of these could be shown there without planting bad data.
+
 ## The other 108
 
 106 are test mutants that survived: a number or a condition was changed and no test

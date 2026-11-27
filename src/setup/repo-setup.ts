@@ -174,7 +174,16 @@ export async function setUpRepo(deps: RepoSetupDeps, options: RepoSetupOptions):
   const wanted = options.serverUrl;
   const read = async (): Promise<string | undefined> => deps.run("claude", ["mcp", "get", options.serverName], options.repo);
   let server = await read();
-  const pointsAt = (text: string | undefined): boolean => text !== undefined && text.includes(wanted);
+  // The address Claude Code prints on the server's `URL:` line must be this one, whole. Finding the
+  // wanted address somewhere in the output is not enough: another address can contain it.
+  const pointsAt = (text: string | undefined): boolean => {
+    if (text === undefined) return false;
+    const urls = text
+      .split(/\r?\n/)
+      .map((line) => /^\s*URL:\s*(\S+)\s*$/.exec(line)?.[1])
+      .filter((url): url is string => url !== undefined);
+    return urls.length === 1 && urls[0] === wanted;
+  };
   if (pointsAt(server)) add("MCP server", "ok", `"${options.serverName}" is set to ${wanted}`);
   else if (options.check) add("MCP server", "would_fix", server === undefined ? `"${options.serverName}" is not added for this folder` : `"${options.serverName}" points somewhere else`);
   else {
