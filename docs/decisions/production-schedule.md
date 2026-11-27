@@ -6,6 +6,7 @@ and seen working on Cloudflare.**
 ## What changed
 
 The production Worker had one binding, the Worker Loader. It now has three, and a timer.
+(A fourth, `EMAIL`, was added on 2026-11-24: docs/decisions/1.6.7-email.md.)
 Each was added to the allowlist (`src/worker/bindings.ts`) in the same change, with the
 project owner's approval of the database, the R2 backups and the schedules.
 
@@ -19,13 +20,18 @@ project owner's approval of the database, the R2 backups and the schedules.
 `DB` that pointed at another database fails the configuration check, and so fails CI.
 So does a second database, a second bucket, or any other timer.
 
-The Worker still has no public address and holds no credential.
+On 2026-11-23 the Worker had no public address and held no credential. Since then it has
+two addresses, each behind Cloudflare Access, and holds the GitHub App's key and
+verification's model key (`ALLOWED_ROUTES`, `ALLOWED_SECRETS`).
 
 ## What the timer does (`src/worker/scheduled.ts`)
 
-- **Every firing:** closes escalations past their time limit.
+- **Every firing:** closes escalations past their time limit, and sends any reminder
+  that is due.
 - **The first firing of each UTC day that finds no backup for that day:** applies
-  retention to the audit log, sweeps old counters, then backs the database up to R2.
+  retention to the audit log, checks the reviewer model, sends the digest, sweeps old
+  counters, trims old stats rows, then backs the database up to R2. (The reviewer check,
+  the emails and the stats trim were added by later tasks.)
 
 The day's backup is the marker that the daily round is done. If the backup fails, the
 next firing tries again, so a failed round mends itself within five minutes.
@@ -61,9 +67,10 @@ when it did something or failed.
 
 - **The first backup is of empty tables.** Production holds no data yet. Restoring a
   backup with real content was proven on the test Worker (task 1.4.5), not from this one.
-- **No email.** No mailer is wired, so the daily digest and the hourly reminders are not
-  sent. When one is, the digest needs its own once-a-day marker: today a daily round
-  that is retried would send it again.
+- **Email is wired since 2026-11-24** (docs/decisions/1.6.7-email.md): reminders go out
+  on every firing and the digest in the daily round. The digest still has no once-a-day
+  marker of its own: a daily round that is done again because its backup failed sends it
+  again.
 - **Nothing alerts when the timer stops.** A missing backup is found by looking.
 - **A database change needs its migration applied by hand** before the Worker that
   needs it is deployed. Nothing enforces the order.
@@ -71,5 +78,5 @@ when it did something or failed.
   deployed from its branch, then merged.
 - **The Worker's bundle grew** from 2 KiB to about 1 MB, because the housekeeping pulls
   in the audit log, the queue and the schema library. Startup is 24 ms.
-- **Counters and switches are still not used by a served route.** The tables exist in
-  production; nothing writes to them but tests elsewhere.
+- **Counters and switches are used by the MCP route and the console** since Phase 2.
+  When this was written no served route used them.

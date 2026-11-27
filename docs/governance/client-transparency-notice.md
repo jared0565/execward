@@ -10,6 +10,10 @@ The owner's review copy is a Claude Doc:
 https://claude.ai/artifact/AvviTkT9J8WzGsfZQa5atv. It held the same text as this file
 on 2026-11-26. If the two differ, the owner's edits there are the newer.
 
+Changed here on 2026-11-27, after a check of this file against the code, and **not yet
+carried into the review copy**: what the second AI model is sent (three places), one more
+row in "How long it is kept", and two new notes for the owner at the end.
+
 ## Blanks only the owner can fill
 
 Everything in **[square brackets]** below.
@@ -46,8 +50,10 @@ against a list of what is allowed, and is recorded.
   their issues, pull requests and history.
 - The script itself, and a record of each action it took.
 - The result the script produced.
-- Where I have written down what a result must satisfy, the result and those
-  requirements are also sent to a second AI model, which checks one against the other.
+- Where a task comes with a list of what its result must satisfy, the task's
+  description, the list, the result and a summary of what the script did are also sent
+  to a second AI model, which checks one against the other. Today the AI model doing
+  the work writes that list.
 
 Each source is labelled with how sensitive its data is. A task is only allowed to handle
 data up to the level set for your project.
@@ -62,7 +68,7 @@ models.
 | Who | What they do | What they receive |
 |---|---|---|
 | Anthropic | Runs the AI model that writes the scripts and reads their results **[confirm: through an organisation account under the Commercial Terms, not a personal plan]** | The task, the script and its result |
-| OpenAI | Runs the second AI model that checks a result against written requirements **[confirm: an API account under business terms]** | The result, the requirements and a summary of what the script did |
+| OpenAI | Runs the second AI model that checks a result against written requirements **[confirm: an API account under business terms]** | The task's description, the requirements, the result and a summary of what the script did |
 | Cloudflare | Runs the service and stores its records | Scripts, results and the record of each action |
 | GitHub | Holds the repositories the scripts read | Nothing new: it already holds this data |
 
@@ -78,6 +84,7 @@ Notification emails about this system contain only a link. They never contain yo
 | The full text of scripts and what they asked for | 7 days |
 | A record that each action happened, without its content | 90 days |
 | The full text for any task that raised a security concern | 90 days |
+| Items waiting for my decision, with the error or figures they are about | No time limit yet **[see the notes for the owner]** |
 | Backup copies of these records | 7 days, then deleted |
 
 Each provider keeps what it receives for its own period, set out in its terms.
@@ -96,8 +103,8 @@ Most tasks run without a person reviewing each step. I am asked to decide when t
 automatic checks cannot, and whenever a security check fails.
 
 Results are checked automatically for certain problems, such as containing a password.
-Where I have written down what a result must satisfy, a second AI model from a different
-provider checks it against that, and can stop a result that does not meet it. That check
+Where a task comes with a list of what its result must satisfy, a second AI model from a
+different provider checks it against that, and can stop a result that does not meet it. That check
 is made by an AI model and can be wrong. **Results are not otherwise reviewed for
 correctness before I use them**, and I treat them as a draft to be checked, as I would
 any other source.
@@ -127,3 +134,15 @@ To ask, send an email to **[the admin email address]**.
   is a design change, not a wording change.
 - **Backups** are kept 7 days (docs/decisions/1.4.5-backups.md). The notice says so. If
   the keep time changes, change the notice.
+- **Deleting a client's records has no command yet** (found 2026-11-27). The notice
+  says you can do it "at any time". The function exists and is tested
+  (`deleteProjectLogs` in `src/audit/log.ts`), but nothing in the console or in
+  `scripts/` runs it, and it clears the audit log only. Build that before sending this
+  notice, or change the sentence.
+- **Items in your queue are never removed** (found 2026-11-27). An item can hold an
+  error's text, the run report and, for a figure that failed its cross-check, both
+  values. Nothing deletes from that table, retention does not cover it, deletion on
+  request does not cover it, and it is in the daily backup. That is a gap in the design,
+  not in the wording; the row added to "How long it is kept" says what is true today.
+- **Who writes the requirements.** Through Claude Code the list of what a result must
+  satisfy is written by the AI model doing the work, not by you. The notice now says so.
