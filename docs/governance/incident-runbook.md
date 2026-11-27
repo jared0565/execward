@@ -52,12 +52,11 @@ Do not issue replacements yet.
 
 ## 3. Keep the evidence
 
-1. **Do not delete a project's logs.** Retention still runs: the kill switch does not
-   stop the timer's daily round, and nothing in the console pauses it. At the first
-   firing of the next UTC day it removes text older than 7 days. So export the log
-   first (the next step). To stop the round itself, take the cron trigger out of
-   `wrangler.jsonc` and deploy, and put it back in step 6; `ALLOWED_TRIGGERS` and the
-   configuration check must change with it.
+1. **Do not delete a project's logs** (`npm run project:erase`) until the incident is
+   closed. Keep the kill switch set: while it is set the timer deletes nothing, not log
+   text, not old rows and not old backups (since 2026-11-27). Backups, the reviewer's
+   check and emails carry on. If you clear the kill switch before the evidence is
+   exported, the next daily round removes text older than 7 days.
 2. Export the audit log for the affected period and store the copy outside Cloudflare.
 3. Run the chain check on the export. A chain that does not verify is itself a finding.
    Write down the result either way.
@@ -96,8 +95,8 @@ Only when step 4 has an answer:
 1. Fix the cause. If it was a policy gap, change the policy; if a tool, block it.
 2. Issue new, narrowly scoped credentials.
 3. Resolve the item in the escalation queue with a written reason.
-4. Clear the kill switch, with a written reason. If the timer was taken out in step 3,
-   put it back.
+4. Clear the kill switch, with a written reason. Only after the export in step 3:
+   clearing it lets the daily round delete again.
 5. Watch the first runs.
 
 ## 7. Review
@@ -129,6 +128,7 @@ Add an adversarial test for the way in, so the same route fails the suite from n
   raises an urgent queue item, and a link-only email is sent within five minutes and
   then every hour; other items go in a daily digest. Anything that raises no queue item
   is found only by reading the log or by being told.
-- There is no switch to pause the timer's daily round (see step 3.1).
+- Deletion is held only by the kill switch (step 3.1). There is no way to hold deletion
+  while letting runs go on.
 - The contact details of the owner, the providers and the ICO are not written here. The
   owner should keep them where they can be reached with the system down.

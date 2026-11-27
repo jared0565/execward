@@ -29,6 +29,7 @@ import { buildWorld } from "../../src/eval/fixtures/world";
 import { GITHUB_READ_ONLY_TOOLS } from "../../src/tools/github-inventory";
 import type { PolicyRecord } from "../../src/contracts/policy";
 import type { ToolBackend } from "../../src/eval/types";
+import { emergencyStop } from "../../src/console/emergency";
 import { escalationQueue } from "../../src/console/escalations";
 import { attemptGate } from "../../src/code-tool/attempts";
 import { meter, memoryMeterSink } from "../../src/meter/meter";
@@ -90,6 +91,8 @@ interface ScheduledBody {
   readonly oldEntryDays?: number;
   /** Raise an escalation a day before the first firing, so that it is past its time limit. */
   readonly expiredEscalation?: boolean;
+  /** Set the kill switch before the first firing. */
+  readonly killed?: boolean;
   readonly brokenBucket?: boolean;
   /** For this many firings, from the first, the statement that removes old audit text is refused. */
   readonly retentionFailsFor?: number;
@@ -278,6 +281,7 @@ export default {
           const queue = escalationQueue({ store: d1EscalationStore(db), control: d1ControlStore(db), audit: auditLog(store, () => first - 86_400_000), now: () => first - 86_400_000, newId: () => "expiredItem0123456789" });
           await queue.raise({ trigger: "repeated_failure", project: "work", runId: "run-1" });
         }
+        if (timer.killed) await emergencyStop({ control: d1ControlStore(db), audit: auditLog(store, () => first - 1000) }, "test");
         let ids = 0;
         const runs = [];
         for (const [firing, at] of timer.times.entries()) {

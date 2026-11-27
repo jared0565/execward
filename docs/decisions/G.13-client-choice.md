@@ -39,8 +39,12 @@ A project with no choice recorded behaves exactly as before.
 ## How it is enforced
 
 - **No AI use.** The service refuses the run before anything is counted against a quota
-  and before anything is read, with `policy_denied` and fixed words that say why. The
-  refusal is written to the audit log like any other.
+  and before anything is read, with `code_mode_off` and fixed words that say why. The
+  refusal is written to the audit log like any other. It is treated as a switch, like
+  the owner's own: it is not counted against the retry limit and raises nothing.
+  (Changed 2026-11-27. As first built the code was `policy_denied`, a security code, so
+  each call on such a project closed it to the caller, raised an urgent item, paused
+  the project and emailed the owner.)
 - **A limit.** A run may handle the lowest of three: the project's own class, the
   provider route's ceiling, and the client's limit. This is the same cap 1.3.7 already
   applies at the call, in discovery and at the reply, so nothing new had to be built

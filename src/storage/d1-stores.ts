@@ -134,6 +134,9 @@ export function d1EscalationStore(db: StateDatabase): EscalationStore {
     async all() {
       return (await db.prepare("SELECT item FROM escalations ORDER BY created_at, id").all<{ item: string }>()).results.map((row) => parse(row.item));
     },
+    async remove(id) {
+      await db.prepare("DELETE FROM escalations WHERE id = ?1").bind(id).run();
+    },
   };
 }
 

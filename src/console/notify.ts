@@ -76,14 +76,18 @@ export function notifier(deps: NotifierDeps): Notifier {
       let sent = 0;
       for (const item of open) {
         const every = ESCALATION_MENU[item.trigger].reminderEveryMs;
-        // Only urgent items are reminded one by one; the rest are in the daily digest already.
-        if (item.status !== "open" || !item.urgent || every === null) continue;
+        // Only urgent items are written about one by one; the rest are in the daily digest already.
+        if (item.status !== "open" || !item.urgent) continue;
         const age = now - item.createdAt;
+        // An urgent item with no reminder period (a tier-2 action) still gets its first email, once.
+        // It used to get none at all on a timer: it is not in the digest either.
         const due =
           deps.tickMs === undefined
-            ? now - (lastSent.get(item.id) ?? item.createdAt) >= every
+            ? every === null
+              ? !lastSent.has(item.id)
+              : now - (lastSent.get(item.id) ?? item.createdAt) >= every
             : // The first run after the item appeared is its first email; after that, once per period.
-              (age >= 0 && age < deps.tickMs) || (age >= every && Math.floor(age / every) !== Math.floor((age - deps.tickMs) / every));
+              (age >= 0 && age < deps.tickMs) || (every !== null && age >= every && Math.floor(age / every) !== Math.floor((age - deps.tickMs) / every));
         if (!due) continue;
         await deps.mailer.send(urgentEmail(deps.baseUrl));
         lastSent.set(item.id, now);

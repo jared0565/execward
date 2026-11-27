@@ -144,7 +144,10 @@ export function codeToolService(deps: CodeToolServiceDeps): CodeToolService {
         // Not knowing what the client asked for is treated as a refusal.
         return { code: "policy_denied", message: "the project's data class could not be read, so the run was not started" };
       }
-      return record?.clientChoice?.aiUse === "off" ? { code: "policy_denied", message: CLIENT_OPTED_OUT_MESSAGE } : undefined;
+      // The client's "off" is a switch like the owner's own, so it has a switch's code. As `policy_denied`
+      // it counted as a security failure: each call on such a project closed it to the caller, raised an
+      // urgent item, paused the project and emailed the owner. (The owner's decision of 2026-11-27.)
+      return record?.clientChoice?.aiUse === "off" ? { code: "code_mode_off", message: CLIENT_OPTED_OUT_MESSAGE } : undefined;
     };
     const quotaContext = (project: string) => ({ store: deps.quotas, project, now: deps.now });
 

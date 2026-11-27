@@ -30,8 +30,11 @@ verification's model key (`ALLOWED_ROUTES`, `ALLOWED_SECRETS`).
   that is due.
 - **The first firing of each UTC day that finds no backup for that day:** applies
   retention to the audit log, checks the reviewer model, sends the digest, sweeps old
-  counters, trims old stats rows, then backs the database up to R2. (The reviewer check,
-  the emails and the stats trim were added by later tasks.)
+  counters, trims old stats rows, removes closed queue items past 90 days, then backs
+  the database up to R2. (The reviewer check, the emails and the two trims were added
+  later.)
+- **While the kill switch is set** the jobs that delete do nothing and say so, and the
+  backup deletes no older backup (2026-11-27; see docs/decisions/1.4.4-retention.md).
 
 The day's backup is the marker that the daily round is done. If the backup fails, the
 next firing tries again, so a failed round mends itself within five minutes.

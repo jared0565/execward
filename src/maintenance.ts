@@ -4,14 +4,18 @@
  *
  * Two rounds. The frequent one, every few minutes, closes escalations past
  * their time limit and sends reminders. The daily one applies retention to
- * the audit log, sends the digest and sweeps old counters.
+ * the audit log, checks the reviewer, sends the digest, and removes old
+ * counters, stats rows and closed queue items.
  *
  * Each job stands alone: one failing does not stop the others, and the report
- * says which ran. Nothing here is called by anything yet; a deployed Worker's
- * scheduled handler will call it.
+ * says which ran. The production Worker's timer calls it (./worker/scheduled.ts).
+ *
+ * While the kill switch is set, the jobs that delete are held: an incident's
+ * evidence must not age out while it is being looked into (incident runbook,
+ * step 3; the owner's decision of 2026-11-27).
  */
 import { applyRetention, type AuditStore } from "./audit/log";
-import type { EscalationItem, EscalationQueue, EscalationStore } from "./console/escalations";
+import { trimEscalations, type EscalationItem, type EscalationQueue, type EscalationStore } from "./console/escalations";
 import type { Notifier } from "./console/notify";
 
 export type MaintenanceRound = "frequent" | "daily";
@@ -19,7 +23,13 @@ export type MaintenanceRound = "frequent" | "daily";
 export interface MaintenanceDeps {
   readonly audit: AuditStore;
   readonly queue: Pick<EscalationQueue, "expire">;
-  readonly escalations: Pick<EscalationStore, "all">;
+  /** With `remove`, closed items past their keeping time are removed in the daily round. */
+  readonly escalations: Pick<EscalationStore, "all"> & Partial<Pick<EscalationStore, "remove">>;
+  /**
+   * Whether deletion is held: true while the kill switch is set. Not being able to tell
+   * counts as held. Left out, nothing is ever held.
+   */
+  readonly held?: () => Promise<boolean>;
   readonly notifier?: Pick<Notifier, "digest" | "remind">;
   readonly sweepCounters?: (now: number) => Promise<void>;
   /** Removes stats rows past their keeping time (task 2.3.1). */
@@ -30,7 +40,7 @@ export interface MaintenanceDeps {
 }
 
 export interface JobResult {
-  readonly job: "expire_escalations" | "send_reminders" | "apply_retention" | "check_reviewer" | "send_digest" | "sweep_counters" | "trim_stats";
+  readonly job: "expire_escalations" | "send_reminders" | "apply_retention" | "check_reviewer" | "send_digest" | "sweep_counters" | "trim_stats" | "trim_queue";
   readonly ok: boolean;
   /** What the job did, as counts. Never content. */
   readonly detail: string;
@@ -41,7 +51,21 @@ export interface JobResult {
  * harm, and one that failed is owed until it works. The others are not repeated: the digest
  * would be a second email, and the reviewer's check is once a day by its own rule.
  */
-export const REPEATABLE_DAILY_JOBS: readonly JobResult["job"][] = ["apply_retention", "sweep_counters", "trim_stats"];
+export const REPEATABLE_DAILY_JOBS: readonly JobResult["job"][] = ["apply_retention", "sweep_counters", "trim_stats", "trim_queue"];
+
+/** What a held job reports. It counts as done: it is not owed, and runs on the first day the switch is clear. */
+export const HELD_DETAIL = "held: the kill switch is set, so nothing was deleted";
+
+/** Whether the jobs that delete are held for this round. Asked once, so every job of the round gets the same answer. */
+export async function deletionHeld(deps: Pick<MaintenanceDeps, "held">): Promise<boolean> {
+  if (deps.held === undefined) return false;
+  try {
+    return await deps.held();
+  } catch {
+    // Deleting is the thing that cannot be undone, so not knowing means not deleting.
+    return true;
+  }
+}
 
 /** `only`, when given, names the jobs of the round to run; the rest are left out of the report. */
 export async function runMaintenance(deps: MaintenanceDeps, round: MaintenanceRound, only?: readonly JobResult["job"][]): Promise<JobResult[]> {
@@ -64,7 +88,11 @@ export async function runMaintenance(deps: MaintenanceDeps, round: MaintenanceRo
     return results;
   }
 
-  await job("apply_retention", async () => {
+  const held = await deletionHeld(deps);
+  // A job that deletes. While deletion is held it does nothing and says so.
+  const deleting = (name: JobResult["job"], work: () => Promise<string>): Promise<void> => job(name, held ? async () => HELD_DETAIL : work);
+
+  await deleting("apply_retention", async () => {
     const done = await applyRetention(deps.audit, deps.now());
     return `${done.contentExpired} entries had their text removed, ${done.entriesRemoved} entries removed`;
   });
@@ -73,8 +101,10 @@ export async function runMaintenance(deps: MaintenanceDeps, round: MaintenanceRo
   if (checkReviewer) await job("check_reviewer", checkReviewer);
   if (notifier) await job("send_digest", async () => ((await notifier.digest(await open())) ? "sent" : "nothing waiting"));
   const sweep = deps.sweepCounters;
-  if (sweep) await job("sweep_counters", async () => (await sweep(deps.now()), "swept"));
+  if (sweep) await deleting("sweep_counters", async () => (await sweep(deps.now()), "swept"));
   const trim = deps.trimStats;
-  if (trim) await job("trim_stats", async () => (await trim(deps.now()), "trimmed"));
+  if (trim) await deleting("trim_stats", async () => (await trim(deps.now()), "trimmed"));
+  const { all, remove } = deps.escalations;
+  if (remove) await deleting("trim_queue", async () => `${await trimEscalations({ all, remove }, deps.now())} closed items removed`);
   return results;
 }

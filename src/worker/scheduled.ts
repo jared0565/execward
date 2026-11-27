@@ -27,7 +27,7 @@ import { backUp, backupKey, retryKey, type BackupBucket, type BackupDatabase, ty
 import { escalationQueue } from "../console/escalations";
 import { bindingMailer, CONSOLE_URL } from "../console/mailer";
 import { notifier } from "../console/notify";
-import { REPEATABLE_DAILY_JOBS, runMaintenance, type JobResult } from "../maintenance";
+import { deletionHeld, REPEATABLE_DAILY_JOBS, runMaintenance, type JobResult } from "../maintenance";
 import { STATS_KEEP_MS } from "../meter/stats";
 import { d1ControlStore, d1EscalationStore, d1QuotaStore, d1StatsStore, sweepQuotaCounters, type StateDatabase } from "../storage/d1-stores";
 import { runGoldenCheck } from "../verify/golden";
@@ -65,6 +65,8 @@ export async function runScheduled(env: ScheduledEnv, now: number, newId: () => 
     queue,
     escalations,
     ...(mailer === undefined ? {} : { notifier: notifier({ mailer, baseUrl: CONSOLE_URL, tickMs: SCHEDULE_MS }) }),
+    // While the kill switch is set, nothing is deleted: not log text, not old rows, not old backups.
+    held: async () => (await d1ControlStore(db).read()).killed,
     sweepCounters: (at: number) => sweepQuotaCounters(db, at),
     trimStats: (at: number) => d1StatsStore(db).trim(at - STATS_KEEP_MS),
     // FR-45: the reviewer model is given its known-answer cases, at most once a day.
@@ -107,7 +109,7 @@ export async function runScheduled(env: ScheduledEnv, now: number, newId: () => 
       let backup: ScheduledResult["backup"];
       if (!backedUpToday) {
         try {
-          backup = await backUp(db, env.BACKUPS, now);
+          backup = await backUp(db, env.BACKUPS, now, { keepOld: await deletionHeld(deps) });
         } catch (error) {
           backup = { error: error instanceof Error ? error.message.slice(0, 200) : "failed" };
         }
