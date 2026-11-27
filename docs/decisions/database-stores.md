@@ -1,7 +1,8 @@
 # Database-backed stores for counters, switches, the queue and projects
 
 Date: 2026-11-23. Serves tasks 1.3.8, 1.3.7, 1.6.3, 1.6.5 and 1.6.6. Status: **written
-and tested on a local database. Not deployed, and not yet wired into a served route.**
+and tested on a local database, and now deployed: the production MCP route, the console
+and the timer are all built from these stores.** Brought up to date on 2026-11-27.
 
 ## Why
 
@@ -38,13 +39,15 @@ understood, is an error, and every reader of the switches treats an error as "of
 
 - **Local D1 is one process.** The "all at once" tests show the statements are atomic,
   not how the deployed database behaves under real concurrent Workers.
-- **Not wired in.** Production has no route that runs a script, so nothing constructs
-  these stores outside the tests. They are what the deployed service will be built from.
-- **The counters table grows** until `sweepQuotaCounters` is run on a schedule. Nothing
-  depends on the sweep for a correct count.
-- **Tool pins and the meter's records** still have no stored form.
-- **Every call a script makes reads the switches,** and every upstream call adds to one
-  or two counters. That is two to three database round trips per call. It has not been
-  measured; task 1.9.4 is where it will show.
+- **Wired in.** The production MCP route (`src/mcp/production.ts`), the console
+  (`src/worker.ts`) and the timer (`src/worker/scheduled.ts`) construct these stores.
+- **The counters table is swept** by `sweepQuotaCounters` in the timer's daily round.
+  Nothing depends on the sweep for a correct count.
+- **Tool pins** still have no stored form. The meter's records have a table since task
+  2.3.1 (`meter_records`).
+- **Reading the switches and counting on every call was slow** as first built: two to
+  three database round trips per call. Since task 1.9.4 the switches are re-read at most
+  every quarter of a second within a run, and calls are counted ahead in blocks of up to
+  16 (docs/decisions/1.9.4-latency.md).
 - **Two test files share one test Worker,** and each now has its own local database
   folder. Sharing one made them lock each other.

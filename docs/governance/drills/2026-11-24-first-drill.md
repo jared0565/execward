@@ -64,3 +64,7 @@ Time from stop to clear: 55 seconds, with the owner already signed in.
 Due by the end of February 2027, or sooner once the `code` tool is served in
 production. It should be planned, start from signed out, and include a running script,
 a credential revocation and a draft notice.
+
+Added 2026-11-27: the `code` tool has been served in production since later on
+2026-11-24, so the "sooner" condition is met. The next drill should be planned now, not
+left to February.

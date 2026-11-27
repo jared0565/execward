@@ -27,7 +27,9 @@ What "pinned" means here:
 
 Approval on record: the owner chose the 15 read-only tools and one project on
 2026-11-24 (task 2.1.10). `npm run setup:github` wrote them to production's policy
-table that day; it is audit entry 7.
+table that day; it is audit entry 7. On 2026-11-26 a second project, `bytes-web`
+(internal), was added with the same command (audit entry 74, task 2.3.2). No tool or
+hash changed.
 
 ## Approved tools and their definition hashes
 

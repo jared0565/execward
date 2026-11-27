@@ -1,15 +1,19 @@
 # Incident runbook
 
-Task G.4. Written 2026-11-23, before Gate 1, as the PRD requires. **Not yet tested.**
-The first drill is owed before Gate 1 and then every quarter (flag 13, task 4.1.4).
+Task G.4. Written 2026-11-23, before Gate 1, as the PRD requires. **Tested in part:**
+the first drill, on 2026-11-24, covered steps 1, 3 and 6
+(docs/governance/drills/2026-11-24-first-drill.md). The next is due by the end of
+February 2027, then every quarter (flag 13, task 4.1.4). Brought up to date with the
+system on 2026-11-27.
 
 An incident is anything that suggests ExecWard did, or was made to do, something it
 should not: a security exception in the queue, a credential that may have leaked, data
 that reached somewhere it should not have, or a sandbox fault with no plain cause.
 
-**Read this first.** Today ExecWard is not deployed, wraps no real tool and holds no
-credential. Steps marked "not built yet" describe the control that will exist; until it
-does, the fallback beside it is what to do.
+**Read this first.** ExecWard is deployed, at `console.execward.com` and
+`mcp.execward.com`. It wraps GitHub, read-only, and holds two credentials: the GitHub
+App's private key and the reviewer's OpenAI key (`VERIFY_OPENAI_API_KEY`). Section 2
+applies to both. What is still missing is listed under "Gaps" at the end.
 
 ## 1. Stop it
 
@@ -48,8 +52,12 @@ Do not issue replacements yet.
 
 ## 3. Keep the evidence
 
-1. **Do not run retention, and do not delete a project's logs.** Pause the daily
-   housekeeping schedule.
+1. **Do not delete a project's logs.** Retention still runs: the kill switch does not
+   stop the timer's daily round, and nothing in the console pauses it. At the first
+   firing of the next UTC day it removes text older than 7 days. So export the log
+   first (the next step). To stop the round itself, take the cron trigger out of
+   `wrangler.jsonc` and deploy, and put it back in step 6; `ALLOWED_TRIGGERS` and the
+   configuration check must change with it.
 2. Export the audit log for the affected period and store the copy outside Cloudflare.
 3. Run the chain check on the export. A chain that does not verify is itself a finding.
    Write down the result either way.
@@ -88,7 +96,8 @@ Only when step 4 has an answer:
 1. Fix the cause. If it was a policy gap, change the policy; if a tool, block it.
 2. Issue new, narrowly scoped credentials.
 3. Resolve the item in the escalation queue with a written reason.
-4. Clear the kill switch, with a written reason. Resume the schedule.
+4. Clear the kill switch, with a written reason. If the timer was taken out in step 3,
+   put it back.
 5. Watch the first runs.
 
 ## 7. Review
@@ -115,7 +124,11 @@ Add an adversarial test for the way in, so the same route fails the suite from n
   February 2027.
 - A daily backup of production now runs (task 1.4.5) and is kept seven days. Restoring
   one is a function, with no command to run it yet.
-- No alerting exists (task 3.1.10). An incident is found by reading the queue or by
-  being told.
+- The alerts of task 3.1.10 (policy denials, quota hits, circuit-breaker trips,
+  definition changes, sandbox faults) are not built. What exists: a security exception
+  raises an urgent queue item, and a link-only email is sent within five minutes and
+  then every hour; other items go in a daily digest. Anything that raises no queue item
+  is found only by reading the log or by being told.
+- There is no switch to pause the timer's daily round (see step 3.1).
 - The contact details of the owner, the providers and the ICO are not written here. The
   owner should keep them where they can be reached with the system down.

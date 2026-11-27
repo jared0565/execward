@@ -167,10 +167,11 @@ separated.
 ## Layout
 
 One column, at most 44rem wide, centred, with 1rem of padding at the sides. Sections
-follow in a fixed order, each opening with a hairline and its headline, 2rem apart.
+follow in a fixed order, each after the first opening with a hairline and its headline,
+2rem apart.
 
 The order is by urgency: what is waiting for the owner; the kill switch; Code Mode;
-paused projects; blocked tools; then the figures; then set-up and checks.
+paused projects; client choices; blocked tools; then the figures; then set-up and checks.
 
 The status message stays at the top of the window as the page scrolls, so the result of
 pressing a button far down the page is always in view. It keeps its line when empty, so
@@ -201,8 +202,9 @@ target for a finger.
 - **Hover / Active:** the ground steps to Hover, then Pressed. Stop steps to its
   pressed red.
 - **Focus:** a 2px Ink ring, 2px clear of the control. The same ring on every control.
-- **Disabled:** dimmed, with the ordinary pointer. Every button is disabled while a
-  request is on its way, so nothing is sent twice.
+- **Disabled:** dimmed, with the ordinary pointer. Every button but Stop is disabled
+  while a request is on its way, so nothing is sent twice. Stop is never disabled: a
+  request that hangs must not take the kill switch away.
 
 ### Queue item
 - **Corner Style:** 0.5rem.
@@ -214,12 +216,13 @@ target for a finger.
 
 ### Inputs / Fields
 - **Style:** Surface ground, 1px Control Edge, 0.375rem corners, 2.75rem tall, with a
-  Label above.
+  Label above. Text fields and drop-down lists share it.
 - **Focus:** the shared ring.
 - **Placeholder:** Quiet Ink at full strength.
 
 ### Tables
-- For figures. Headings are Labels in Quiet Ink; each row ends in a hairline.
+- For figures, and for the list of projects with each client's choice. Headings are
+  Labels in Quiet Ink; each row ends in a hairline.
 - The first column holds the name and takes the spare width; numbers are set to the
   right.
 - A row that needs a remark carries it as a note under its name.
