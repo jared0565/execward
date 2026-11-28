@@ -17,6 +17,8 @@ import type { AuditLog } from "../audit/log";
 import type { MeterFactory, MeterRecord, RunMeter } from "../meter/meter";
 import type { NetSavingEntry } from "../meter/net-saving";
 import { metricFor, type MetricsSink } from "../metrics/metrics";
+import type { CommitOutcome } from "../broker/broker";
+import { changeSetHash, type PlannedWrite } from "../broker/change-set";
 import type { AttemptGate } from "./attempts";
 import { releaseGate, type GateCheck } from "./release-gate";
 import { crossCheck, type CheckedFigure } from "../verify/cross-check";
@@ -34,7 +36,16 @@ export type RunHost = SandboxHost & {
    * A host that cannot say is treated as having read the highest class.
    */
   provenance?(): { readonly dataClass: DataClass | undefined; readonly records: number };
+  /** The writes the script asked for, recorded and not done (FR-42). */
+  readonly writes?: readonly PlannedWrite[];
+  /** Checks those writes as one set and sends exactly them. Never throws. */
+  commitWrites?(): Promise<CommitOutcome>;
 };
+
+/** What a model is told when its script's writes were made. Fixed words and counts. */
+export function writesNotice(made: number): string {
+  return `This script asked for ${made} ${made === 1 ? "write" : "writes"}. ${made === 1 ? "It was" : "They were"} recorded while the script ran and made after it ended, in order. Inside the script each write returned a placeholder, not the tool's result, so the script's own result cannot hold what a write returned.`;
+}
 
 /** One call a script made, as the audit log records it (FR-8). */
 export interface CallRecord {
@@ -334,18 +345,20 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   let gateChecks: readonly GateCheck[] | undefined;
   let criteria: RunReport["criteria"];
   let crossChecks: RunReport["crossChecks"];
-  const report = (errors: readonly ExecWardError[], assertionFailed = false): RunReport => ({
+  // Writes that were made, in order (FR-42). Empty until a change set is committed.
+  const sideEffects: { tool: string; summary: string }[] = [];
+  const report =(errors: readonly ExecWardError[], assertionFailed = false): RunReport => ({
     runId,
     scriptHash,
     callsByTool: shownCalls(),
     recordsRead,
-    recordsWritten: 0,
+    recordsWritten: sideEffects.length,
     // The error that ended the run, then any failed calls the script survived.
     errors: [...errors, ...callErrors(journal, shownPath)],
     retries: deps.attempts?.retries() ?? 0,
     // A run ends at its first failed assertion, so `failed` is 0 or 1.
     assertions: { passed: assertionsPassed, failed: assertionFailed ? 1 : 0 },
-    sideEffects: [],
+    sideEffects: [...sideEffects],
     ...(criteria ? { criteria } : {}),
     ...(crossChecks ? { crossChecks } : {}),
     verification,
@@ -509,6 +522,8 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
   let assertionsWithheld: number | undefined;
   let checkedFigures: readonly CheckedFigure[] | undefined;
   let reviewed: ReviewVerdict | undefined;
+  // What became of the script's writes, for the audit log.
+  let changeSet: Record<string, unknown> | undefined;
   try {
     const host = deps.hostFor({ runId, project: input.data.project });
     runMeter = deps.meter?.start({ runId, project: input.data.project });
@@ -651,7 +666,8 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
             // whatever the run was allowed to handle, when that is higher than what it read.
             dataClass: exposed === undefined ? (read ?? "public") : higherClass(read ?? "public", exposed.allowed),
             deterministicCheckPassed: true,
-            tier: 0,
+            // A change set with a tier-2 write is never committed here, so 1 is the most this can be.
+            tier: (host.writes?.length ?? 0) > 0 ? 1 : 0,
           });
         } catch {
           // A reviewer that breaks is a missing reviewer: the result stays unreviewed.
@@ -672,6 +688,61 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
         // The report was drawn up before the reviewer was asked. Its time must include the wait for the
         // reviewer. (Seen on production, 2026-11-25: a reviewed run reported 148 ms and took 3.4 seconds.)
         output = { ...output, report: { ...output.report, verification, ...(reviewed === undefined ? {} : { durationMs: Math.max(0, deps.now() - started) }) } };
+      }
+    }
+
+    // FR-42: the writes the script asked for are made now, as one set, or not at all. Only a
+    // result that passed every check above has its writes made: a run that failed, was
+    // refused something, was held or was blocked by the reviewer writes nothing.
+    const planned = host.writes ?? [];
+    if (planned.length > 0) {
+      if (output.status !== "completed" || !host.commitWrites) {
+        changeSet = { planned: planned.length, outcome: "dropped", reason: "the run did not complete" };
+      } else {
+        // The set is on record before any of it is sent. No record, no writes.
+        let recorded = false;
+        try {
+          const hash = await changeSetHash(planned);
+          await deps.audit.record({
+            kind: "change_set_planned",
+            runId,
+            project: input.data.project,
+            body: {
+              scriptHash,
+              hash,
+              writes: planned.map((write) => ({
+                index: write.index,
+                path: write.path,
+                tier: write.tier,
+                definitionHash: write.definitionHash,
+                // As data, not as text, so the log's redaction sees each field's name.
+                args: write.argsJson.length > MAX_LOGGED_ARGUMENT_BYTES ? `[${write.argsJson.length} characters of arguments, not logged in full]` : (JSON.parse(write.argsJson) as unknown),
+              })),
+            },
+          });
+          recorded = true;
+        } catch {
+          recorded = false;
+        }
+        const outcome: CommitOutcome = recorded
+          ? await host.commitWrites()
+          : { status: "dropped", error: { code: "policy_denied", message: "the change set was dropped and nothing was written: the audit log is unavailable" } };
+        if (outcome.status === "committed" || outcome.status === "stopped") {
+          for (const write of outcome.done) sideEffects.push({ tool: write.path, summary: `write ${write.index} of ${planned.length}, made` });
+        }
+        changeSet = {
+          planned: planned.length,
+          outcome: outcome.status,
+          ...(outcome.status === "committed" || outcome.status === "stopped" ? { hash: outcome.hash, done: outcome.done } : {}),
+          ...(outcome.status === "stopped" ? { failedAt: outcome.failedAt } : {}),
+        };
+        if (outcome.status === "committed") {
+          output = { ...output, report: { ...report([]), verification }, notices: [writesNotice(outcome.done.length)] };
+        } else if (outcome.status === "dropped" || outcome.status === "stopped") {
+          // The script's result is not handed over: it was written as if the writes would be made.
+          verification = "failed";
+          output = { status: "error", error: outcome.error, ...hygiene, report: report([outcome.error]) };
+        }
       }
     }
   } catch (cause) {
@@ -720,6 +791,7 @@ async function runOnce(rawInput: unknown, deps: CodeToolDeps): Promise<CodeToolO
     ...(checkedFigures === undefined ? {} : { crossCheck: checkedFigures }),
     // The reviewer's verdict, why there was none, and what the call cost.
     ...(reviewed === undefined ? {} : { review: reviewed }),
+    ...(changeSet === undefined ? {} : { changeSet }),
   };
   return (await finish(output, { ...hygieneFacts, ...kept, ...(gateChecks ? { releaseGate: gateChecks } : {}) })) ? output : unrecorded();
 }
