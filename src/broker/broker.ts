@@ -6,7 +6,11 @@
  * This first version enforces caller rules and tiers only:
  *   - no record              -> refused (default deny, FR-50)
  *   - caller rule "direct"   -> refused
- *   - tier 1 or 2            -> refused: the dry run and approvals do not exist yet
+ *   - tier 1 or 2            -> refused, unless the dry run is on (`writes: "record"`,
+ *                               task 3.1.2). Then the call is checked, kept in the
+ *                               run's change set and not sent; `commitWrites()` sends
+ *                               the set once the run has ended. Production leaves the
+ *                               dry run off until task 3.1.3.
  *   - the policy store fails -> refused (fail closed)
  *
  * A refusal is a security event (FR-41). It ends the run: every later call in
@@ -19,6 +23,7 @@ import { CALL_LIMITS, CIRCUIT_BREAKER } from "../limits";
 import type { SandboxHost } from "../executor";
 import { DefinitionChangedError } from "../registry/definition";
 import { pathAllowed, urlAllowed } from "./allowlists";
+import { argumentsJson, CHANGE_SET_LIMITS, changeSetHash, changeSetProblems, dryRunAnswer, type PlannedWrite } from "./change-set";
 import { checkAgainstSchema } from "./json-schema";
 import { effectivePolicy, pathOf, type PolicyStore } from "./policy-store";
 import { countCall, MAX_COUNT_BLOCK, memoryQuotaStore, returnCalls, type QuotaContext } from "./quotas";
@@ -98,7 +103,35 @@ export interface BrokerHost extends SandboxHost {
   dataClass(): DataClass | undefined;
   /** What the code tool needs for output hygiene (FR-36). */
   provenance(): { readonly dataClass: DataClass | undefined; readonly records: number };
+  /** The writes the script asked for, recorded and not done (FR-42). Empty unless `writes` is "record". */
+  readonly writes: readonly PlannedWrite[];
+  /**
+   * Checks the recorded writes as one set and, if nothing is wrong, sends exactly
+   * those calls in order (FR-42). Only once the run has ended, and only once.
+   * It never throws.
+   */
+  commitWrites(): Promise<CommitOutcome>;
 }
+
+/** One write that was sent and accepted. Nothing of the tool's answer is kept but its size. */
+export interface CommittedWrite {
+  readonly index: number;
+  readonly path: string;
+  readonly resultBytes: number;
+}
+
+export type CommitOutcome =
+  /** The script asked for no writes. */
+  | { readonly status: "nothing" }
+  /** Every write was sent and accepted, in order. */
+  | { readonly status: "committed"; readonly hash: string; readonly done: readonly CommittedWrite[] }
+  /** A check failed before anything was sent. Nothing was written. */
+  | { readonly status: "dropped"; readonly error: ExecWardError }
+  /**
+   * Sending stopped at write `failedAt`. Those in `done` were made and stand; that
+   * one may or may not have been made; none after it was sent.
+   */
+  | { readonly status: "stopped"; readonly hash: string; readonly done: readonly CommittedWrite[]; readonly failedAt: number; readonly error: ExecWardError };
 
 export interface BrokerDeps {
   readonly store: PolicyStore;
@@ -127,6 +160,13 @@ export interface BrokerDeps {
   readonly maxDataClass?: DataClass | Promise<DataClass>;
   /** The tool's definition, or `undefined` when there is none. No definition, no call. */
   readonly definitionFor: (record: PolicyRecord) => Promise<ToolDefinition | undefined>;
+  /**
+   * What happens when a script calls a tier-1 or tier-2 tool. Left out, or
+   * "refuse", the call is refused and the run ends, as it always has. "record"
+   * turns the dry run on (FR-42): the call is checked, kept and not sent.
+   * Production does not pass "record" yet: that is task 3.1.3.
+   */
+  readonly writes?: "refuse" | "record";
 }
 
 /** Builds the broker for one run. Never shared between runs. */
@@ -134,6 +174,11 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
   const denials: BrokerDenial[] = [];
   const reads: TaggedRead[] = [];
   const flags: BrokerFlag[] = [];
+  /** The change set: writes the script asked for, in order. Nothing in it has been sent. */
+  const planned: PlannedWrite[] = [];
+  const recording = deps.writes === "record";
+  /** Set when the change set has been taken for committing. It is taken once. */
+  let taken = false;
   let ended: ExecWardError | undefined;
 
   /**
@@ -325,6 +370,83 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
     },
     dataClass: () =>
       reads.length === 0 ? undefined : DATA_CLASSES[Math.max(...reads.map((read) => DATA_CLASSES.indexOf(read.dataClass)))],
+    writes: planned,
+
+    async commitWrites(): Promise<CommitOutcome> {
+      if (planned.length === 0) return { status: "nothing" };
+      const dropped = (code: ExecWardError["code"], why: string): CommitOutcome => ({
+        status: "dropped",
+        error: { code, message: `the change set was dropped and nothing was written: ${why}` },
+      });
+      // While the script runs it could still add to the set, so nothing is sent until it cannot.
+      if (!closed) return dropped("policy_denied", "the script has not ended");
+      // A run that was refused something writes nothing (FR-41).
+      if (ended) return dropped(ended.code, "the run was ended by a refusal");
+      if (taken) return dropped("policy_denied", "it was already committed or dropped");
+      taken = true;
+      const writes = [...planned];
+
+      // Each tool's record and definition as they stand now, not as they stood when the call was recorded.
+      const current = new Map<string, PolicyRecord | undefined>();
+      try {
+        for (const path of new Set(writes.map((write) => write.path))) current.set(path, await deps.store.get(path));
+      } catch {
+        return dropped("policy_denied", "the policy table is unavailable");
+      }
+      const problems = changeSetProblems(writes, current);
+      const first = problems[0];
+      if (first) return dropped(first.code, problems.slice(0, 3).map((problem) => problem.message).join("; "));
+      for (const [path, record] of current) {
+        if (record === undefined) return dropped("policy_denied", `"${path}" no longer has a policy record`);
+        try {
+          if ((await deps.definitionFor(record)) === undefined) return dropped("policy_denied", `"${path}" has no definition`);
+        } catch (cause) {
+          if (cause instanceof DefinitionChangedError) return dropped("definition_changed", `the definition of "${path}" no longer matches its pin`);
+          return dropped("policy_denied", `the definition of "${path}" is unavailable`);
+        }
+      }
+      let hash: string;
+      try {
+        hash = await changeSetHash(writes);
+      } catch {
+        return dropped("policy_denied", "the change set could not be hashed");
+      }
+
+      const done: CommittedWrite[] = [];
+      for (const write of writes) {
+        const stopped = (error: ExecWardError): CommitOutcome =>
+          done.length === 0 && error.code !== "upstream_error" ? { status: "dropped", error } : { status: "stopped", hash, done, failedAt: write.index, error };
+        // FR-17: a switch thrown while the set is being committed stops it before the next write.
+        if (deps.control) {
+          let off: ExecWardError | undefined;
+          try {
+            off = await deps.control(write.path);
+          } catch {
+            off = { code: "code_mode_off", message: "the control state is unavailable, so nothing more is written" };
+          }
+          if (off) return stopped({ code: off.code === "code_mode_off" ? "code_mode_off" : "policy_denied", message: `write ${write.index} of ${writes.length} was not made: ${off.message}` });
+        }
+        const record = current.get(write.path);
+        if (record === undefined) return stopped({ code: "policy_denied", message: `write ${write.index} of ${writes.length} was not made: its tool has no policy record` });
+        let result: unknown;
+        try {
+          // Exactly the text that was checked and hashed, and nothing the script can still reach.
+          result = await deps.upstream({ record, args: JSON.parse(write.argsJson) as unknown });
+        } catch {
+          // The upstream's own words are untrusted and are not passed on. Whether the write was
+          // made is not known: a call can fail after the other side has acted on it.
+          return stopped({ code: "upstream_error", message: `write ${write.index} of ${writes.length}, to "${write.path}", failed; it may or may not have been made, and no later write was sent` });
+        }
+        let resultBytes: number;
+        try {
+          resultBytes = new TextEncoder().encode(JSON.stringify(result) ?? "").length;
+        } catch {
+          resultBytes = 0;
+        }
+        done.push({ index: write.index, path: write.path, resultBytes });
+      }
+      return { status: "committed", hash, done };
+    },
 
     async callTool(path, args) {
       guard(path);
@@ -333,7 +455,9 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       const policy = effectivePolicy(record);
       if (!policy.classified || record === undefined) deny(path, "the tool has no policy record");
       if (!scriptMayCall(policy)) deny(path, "the tool may only be called directly, not from a script");
-      if (policy.tier !== 0) deny(path, `tier ${policy.tier} tools cannot be called from a script yet`);
+      // Without the dry run a write is refused outright. With it, the call goes through every
+      // check below like any other and is then recorded, not sent (FR-42).
+      if (policy.tier !== 0 && !recording) deny(path, `tier ${policy.tier} tools cannot be called from a script yet`);
       const cap = await dataClassCap(path);
       if (cap !== undefined && DATA_CLASSES.indexOf(policy.dataClass) > DATA_CLASSES.indexOf(cap)) {
         deny(path, `the tool returns ${policy.dataClass} data, and this run may only handle ${cap} data`);
@@ -371,6 +495,17 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       guard(path);
       // Or a sibling may have read something sensitive: the rule is asked again at the last moment.
       checkSensitiveFlow(path, record, destinations);
+
+      if (record.tier !== 0) {
+        // FR-42: a write is kept, not made. The script gets fixed words and the write's number.
+        if (planned.length >= CHANGE_SET_LIMITS.maxWrites) end("quota_exceeded", path, `the run's limit of ${CHANGE_SET_LIMITS.maxWrites} writes was reached`);
+        const argsJson = argumentsJson(args);
+        // The script's own mistake, like any other bad argument.
+        if (argsJson === undefined) throw new Error("schema_invalid: the arguments are not valid JSON data");
+        const write: PlannedWrite = { index: planned.length + 1, path, server: record.server, tool: record.tool, tier: record.tier, definitionHash: record.definitionHash, argsJson };
+        planned.push(write);
+        return dryRunAnswer(write.index);
+      }
 
       let result: unknown;
       try {
@@ -440,7 +575,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       guard("search");
       // A script only ever learns about tools it could call.
       const paths = records
-        .filter((record) => scriptMayCall(record) && record.tier === 0 && withinCap(record, cap))
+        .filter((record) => scriptMayCall(record) && (record.tier === 0 || recording) && withinCap(record, cap))
         .map(pathOf)
         .sort();
       const wanted = [...new Set(searchWords(query))].slice(0, SEARCH_LIMITS.maxWords);
@@ -476,7 +611,7 @@ export function brokerHost(deps: BrokerDeps): BrokerHost {
       if (path.length > SEARCH_LIMITS.maxPathChars) throw new Error("no tool of that name is available to scripts");
       await switches(path);
       const record = await lookup(path);
-      if (record === undefined || !scriptMayCall(record) || record.tier !== 0 || !withinCap(record, await dataClassCap(path))) {
+      if (record === undefined || !scriptMayCall(record) || (record.tier !== 0 && !recording) || !withinCap(record, await dataClassCap(path))) {
         // Not a security event: asking about a name is not an attempt to use it.
         throw new Error(`no tool named "${path}" is available to scripts`);
       }
