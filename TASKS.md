@@ -216,7 +216,7 @@ Exit: in testing, no tier-2 action runs without approval and no write skips the 
 | 3.1.6 | Make paused-run IDs random, bound and expiring | FR-26 | 3.1.4 | A guessed ID, or one reused by another user or project, is refused and never counts as sign-in | P1 | Not started |
 | 3.1.7 | Make side-effecting calls retry-safe | FR-15 | 3.1.2 | A re-run with the same idempotency key does not repeat the action | P1 | Not started |
 | 3.1.9 | Decide how merges of ExecWard-written branches are protected, and start GitHub Pro if private repos are in scope | FR-37; Flag 14 | 2.3.4 | Decision recorded: Pro with required status checks, public repos only, or manual merge on green CI; if Pro, a failing check blocks a merge on a private test repo | P1 | Not started |
-| 3.1.10 | Turn on alerts for policy denials, quota hits, circuit-breaker trips, definition changes and sandbox faults | Governance: monitoring; Flag 15 | 1.9.3, 2.3.4 | Each alert fires in a test before any tier-1 write runs | — | Not started |
+| 3.1.10 | Turn on alerts for policy denials, quota hits, circuit-breaker trips, definition changes and sandbox faults | Governance: monitoring; Flag 15 | 1.9.3, 2.3.4 | Each alert fires in a test before any tier-1 write runs. Done 2026-11-28: a log line for every alert and an email to the owner at most once an hour for each kind; each of the five fires in test/alerts.test.ts; wired into production, not seen firing there. See docs/decisions/3.1.10-alerts.md | — | Done |
 | 3.1.8 | Prove the Phase 3 exit | Phase 3 exit; Build plan 3.1 | 3.1.3 to 3.1.7, 3.2.2 | Tests show no tier-2 action without approval and no write without the dry run; adversarial suite passing | — | Not started |
 
 ### 3.2 Code and dependency writes
