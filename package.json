@@ -23,6 +23,7 @@
     "audit:export": "tsx scripts/export-audit.ts",
     "emergency:stop": "tsx scripts/emergency-stop.ts",
     "project:erase": "tsx scripts/erase-project.ts",
+    "restore:drill": "tsx scripts/restore-drill.ts",
     "setup:github": "tsx scripts/setup-github.ts",
     "repo:setup": "tsx scripts/repo-setup.ts"
   },
