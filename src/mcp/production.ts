@@ -30,7 +30,9 @@ import { githubAppToken, type GithubAppSettings } from "../connectors/github-app
 import { principalFromAccess, type AccessContext } from "../console/access";
 import type { WorkerLoader } from "../executor/dynamic-worker";
 import { meter, type MeterSink } from "../meter/meter";
+import { alertingSink, type AlertDeps } from "../metrics/alerts";
 import { logMetricsSink } from "../metrics/metrics";
+import { bindingMailer, CONSOLE_URL } from "../console/mailer";
 import { outboundFetch } from "../net/outbound";
 import { registry } from "../registry/registry";
 import { codeToolService, type CodeToolService } from "../service";
@@ -52,6 +54,8 @@ export interface McpEnv {
   readonly DB: unknown;
   readonly MCP_ACCESS_AUD?: string;
   readonly OWNER_EMAIL?: string;
+  /** The email binding (task 1.6.7). Without it and the owner's address, alerts are logged and not emailed. */
+  readonly EMAIL?: unknown;
   readonly GITHUB_APP_ID?: string;
   readonly GITHUB_APP_INSTALLATION_ID?: string;
   readonly GITHUB_APP_PRIVATE_KEY?: string;
@@ -113,6 +117,12 @@ export function callerLabels(request: Request): Record<string, string> {
   return labels;
 }
 
+/** What production's alerts need: the email binding when it is set up, and the shared counters. */
+export function productionAlerts(env: McpEnv, now: () => number): AlertDeps {
+  const mailer = bindingMailer(env.EMAIL, env.OWNER_EMAIL);
+  return { ...(mailer === undefined ? {} : { mailer }), baseUrl: CONSOLE_URL, counts: d1QuotaStore(env.DB as StateDatabase), now };
+}
+
 /** The code tool with every store on the production database. */
 export async function productionService(env: McpEnv, now: () => number, labels: Readonly<Record<string, string>> = {}): Promise<CodeToolService> {
   const db = env.DB as StateDatabase & AuditDatabase;
@@ -138,7 +148,9 @@ export async function productionService(env: McpEnv, now: () => number, labels: 
     docsFor: (path) => pinned.docsFor(path),
     // No level named: the default, summary since Gate 1.
     meter: meter({ sink: logMeterSink, ...(Object.keys(labels).length === 0 ? {} : { labels }) }),
-    metrics: logMetricsSink(),
+    // Task 3.1.10: a run that ends on one of five codes also raises an alert. The line is always
+    // logged; the email is sent at most once an hour for each kind.
+    metrics: alertingSink(logMetricsSink(), productionAlerts(env, now)),
     now,
     newRunId: () => crypto.randomUUID(),
     // FR-48: the reviewer, on its own key, host list and budget. With no key stored it is refused
